@@ -3,8 +3,11 @@
 import os
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import URL, create_engine, pool, text
 
 from jhunt.platform.config import Settings, get_settings
@@ -44,3 +47,12 @@ def scratch_db_url(settings: Settings) -> Iterator[URL]:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
         admin.dispose()
+
+
+@pytest.fixture
+def migrated_db_url(scratch_db_url: URL) -> URL:
+    """A scratch database upgraded to the latest migration."""
+    cfg = Config(toml_file=Path(__file__).resolve().parent.parent / "pyproject.toml")
+    cfg.attributes["database_url"] = scratch_db_url
+    command.upgrade(cfg, "head")
+    return scratch_db_url
