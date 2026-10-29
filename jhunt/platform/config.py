@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     postgres_user: str
     postgres_password: SecretStr
     postgres_db: str
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
+    # No defaults for host and port: a missing value must fail here, not
+    # connect to whatever Postgres happens to be listening on localhost:5432.
+    postgres_host: str
+    postgres_port: int
 
     def database_url(self, database: str | None = None) -> URL:
         """SQLAlchemy URL for psycopg 3. Its str() hides the password."""

@@ -28,12 +28,12 @@ def set_required(env: pytest.MonkeyPatch) -> None:
     env.setenv("POSTGRES_USER", "u")
     env.setenv("POSTGRES_PASSWORD", "s3cret-value")
     env.setenv("POSTGRES_DB", "d")
+    env.setenv("POSTGRES_HOST", "db.internal")
+    env.setenv("POSTGRES_PORT", "5433")
 
 
 def test_reads_environment(clean_env: pytest.MonkeyPatch) -> None:
     set_required(clean_env)
-    clean_env.setenv("POSTGRES_HOST", "db.internal")
-    clean_env.setenv("POSTGRES_PORT", "5433")
 
     s = Settings()  # type: ignore[call-arg]
 
@@ -48,10 +48,13 @@ def test_reads_environment(clean_env: pytest.MonkeyPatch) -> None:
     assert s.database_url("other").database == "other"
 
 
-def test_defaults_to_local_postgres(clean_env: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("missing", ["POSTGRES_HOST", "POSTGRES_PORT"])
+def test_host_and_port_have_no_default(clean_env: pytest.MonkeyPatch, missing: str) -> None:
+    # A default once sent these credentials to another project's Postgres on 5432.
     set_required(clean_env)
-    s = Settings()  # type: ignore[call-arg]
-    assert (s.postgres_host, s.postgres_port) == ("localhost", 5432)
+    clean_env.delenv(missing)
+    with pytest.raises(ValidationError, match=missing.lower()):
+        Settings()  # type: ignore[call-arg]
 
 
 def test_missing_variable_fails_fast(clean_env: pytest.MonkeyPatch) -> None:
