@@ -10,8 +10,9 @@
 # (default: this repo).
 #
 # Creates:
-#   gs://jhunt-staging-$SUFFIX  30-day lifecycle delete; no versioning, no retention
-#   gs://jhunt-records-$SUFFIX  versioning + per-object retention enabled; NO bucket retention policy
+#   gs://jhunt-staging-$SUFFIX  30-day lifecycle delete; no versioning, no retention, soft delete off
+#   gs://jhunt-records-$SUFFIX  versioning + per-object retention enabled; NO bucket retention
+#                               policy; 30-day soft delete
 #   jhunt-app   staging: create, view, delete
 #               records: create, view, and set retention at write time; nothing else
 #   owner       records: may remove an object's Unlocked retention and delete that object
@@ -65,8 +66,10 @@ if ! gcloud storage buckets describe "gs://${STAGING}" "${P[@]}" >/dev/null 2>&1
   gcloud storage buckets create "gs://${STAGING}" "${P[@]}" --location="$REGION" \
     --default-storage-class=STANDARD --uniform-bucket-level-access --public-access-prevention
 fi
+# Soft delete off: expired postings should go for good, not linger (and bill) for 7 days.
 gcloud storage buckets update "gs://${STAGING}" "${P[@]}" \
-  --lifecycle-file="${HERE}/staging-lifecycle.json" --no-versioning --clear-retention-period
+  --lifecycle-file="${HERE}/staging-lifecycle.json" --no-versioning --clear-retention-period \
+  --clear-soft-delete
 
 step "bucket gs://${RECORDS}"
 if ! gcloud storage buckets describe "gs://${RECORDS}" "${P[@]}" >/dev/null 2>&1; then
@@ -76,7 +79,9 @@ if ! gcloud storage buckets describe "gs://${RECORDS}" "${P[@]}" >/dev/null 2>&1
     --enable-per-object-retention
 fi
 # No bucket-level retention policy: each record carries its own (ADR 0002).
-gcloud storage buckets update "gs://${RECORDS}" "${P[@]}" --versioning --clear-retention-period
+# 30-day soft delete: the owner's undo window after deleting an application's records.
+gcloud storage buckets update "gs://${RECORDS}" "${P[@]}" --versioning --clear-retention-period \
+  --soft-delete-duration=30d
 per_object="$(gcloud storage buckets describe "gs://${RECORDS}" "${P[@]}" --format=json |
   python3 -c 'import json,sys; print((json.load(sys.stdin).get("per_object_retention") or {}).get("mode", ""))')"
 if [[ "$per_object" != "Enabled" ]]; then

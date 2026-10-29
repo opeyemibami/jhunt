@@ -12,8 +12,8 @@ What gets created:
 
 | Resource | Settings |
 |---|---|
-| `gs://jhunt-staging-<suffix>` | Uniform access, public access blocked, 30-day lifecycle delete, no versioning, no retention |
-| `gs://jhunt-records-<suffix>` | Uniform access, public access blocked, object versioning, per-object retention enabled, **no** bucket retention policy |
+| `gs://jhunt-staging-<suffix>` | Uniform access, public access blocked, 30-day lifecycle delete, no versioning, no retention, soft delete off |
+| `gs://jhunt-records-<suffix>` | Uniform access, public access blocked, object versioning, per-object retention enabled, **no** bucket retention policy, 30-day soft delete |
 | `jhunt-app` | Both buckets: `objectCreator` + `objectViewer`. Staging: `jhuntObjectDeleter`. Records: `jhuntRetentionSetter` |
 | Your account | Records: `jhuntRecordsCurator`. Also `serviceAccountTokenCreator` on `jhunt-app`, so you can impersonate it instead of using a key |
 | `jhunt-ci` | Trusted by GitHub Actions runs from this repo (matched on numeric repo id); no bucket roles yet |
@@ -24,7 +24,7 @@ What gets created:
 | `jhuntRetentionSetter` | `storage.objects.setRetention` |
 | `jhuntRecordsCurator` | `storage.objects.get`, `.list`, `.update`, `.delete`, `.setRetention`, `.overrideUnlockedRetention` |
 
-No service account keys are created. Both buckets keep GCS's default 7-day soft delete.
+No service account keys are created.
 
 ## Run order
 
@@ -47,15 +47,17 @@ GCP_PROJECT=<project-id> GCS_STAGING_BUCKET=jhunt-staging-<suffix> \
   GCS_RECORDS_BUCKET=jhunt-records-<suffix> infra/gcp/check-objectstore.sh
 ```
 
-If section 2 of the check fails with a permission error, IAM hasn't caught up yet: wait and re-run. Section 2 must pass before the refusals in section 3 mean anything, and every refusal must be a 403.
+If section 2 of the check fails with a permission error, IAM hasn't caught up yet: wait and re-run. Section 2 must pass before the refusals in section 3 mean anything. Each refusal must match its expected error (the missing permission, or retention), and must be a 403 wherever gcloud prints a status.
 
 ## Deleting a record
 
-Each record carries its own Unlocked retention (3 years from when it was written). To delete one, remove that object's retention and delete it. Nothing else in the bucket is affected:
+Each record carries its own Unlocked retention (3 years from when it was written). Records is versioned, so one record can have several generations, each with its own retention. Deleting only the live version leaves the data in place as a noncurrent generation. Clear retention on **every** generation and delete each one. Nothing else in the bucket is affected:
 
 ```bash
-gcloud storage objects update 'gs://jhunt-records-<suffix>/<path>' --clear-retention --override-unlocked-retention
-gcloud storage rm 'gs://jhunt-records-<suffix>/<path>#<generation>'
+for url in $(gcloud storage ls --all-versions 'gs://jhunt-records-<suffix>/<path>'); do
+  gcloud storage objects update "$url" --clear-retention --override-unlocked-retention
+  gcloud storage rm "$url"
+done
 ```
 
-The deleted object stays soft-deleted, and restorable, for 7 days.
+Each deleted generation stays soft-deleted, and restorable, for 30 days. That's the undo window. The week-1 per-application delete command does the same for every object of an application (ADR 0002).

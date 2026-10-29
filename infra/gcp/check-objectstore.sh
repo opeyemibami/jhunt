@@ -12,8 +12,9 @@
 # 4. As the owner: deleting a retained record is refused; removing retention on
 #    record A and deleting it works; record B stays protected and intact.
 #
-# On exit (pass or fail) it removes everything it wrote. Deleted objects stay
-# soft-deleted for 7 days (GCS default). Exits non-zero if any check fails.
+# On exit (pass or fail) it removes everything it wrote. The two test records
+# then stay soft-deleted for 30 days (records' undo window); staging keeps
+# nothing. Exits non-zero if any check fails.
 set -euo pipefail
 
 : "${GCP_PROJECT:?set GCP_PROJECT}"
@@ -114,8 +115,15 @@ if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" '(d.get("per_object_retention") or {
   pass "records: per-object retention enabled"; else fail "records: per-object retention not enabled"; fi
 if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" 'd.get("retention_policy")')" == "None" ]]; then
   pass "records: no bucket retention policy"; else fail "records: has a bucket retention policy"; fi
+soft_records="$(bucket_field "$GCS_RECORDS_BUCKET" '(d.get("soft_delete_policy") or {}).get("retentionDurationSeconds", "0")')"
+if [[ "$soft_records" == "2592000" ]]; then
+  pass "records: soft delete 30 days"; else fail "records: soft delete ${soft_records}s, want 2592000s (30 days)"; fi
 if [[ "$(bucket_field "$GCS_STAGING_BUCKET" 'd.get("retention_policy")')" == "None" ]]; then
   pass "staging: no retention policy"; else fail "staging: has a retention policy"; fi
+# Disabled soft delete shows as a 0-second duration or no policy at all.
+soft_staging="$(bucket_field "$GCS_STAGING_BUCKET" '(d.get("soft_delete_policy") or {}).get("retentionDurationSeconds", "0")')"
+if [[ "$soft_staging" == "0" ]]; then
+  pass "staging: soft delete off"; else fail "staging: soft delete ${soft_staging}s, want off"; fi
 if [[ "$(bucket_field "$GCS_STAGING_BUCKET" '[(r["action"]["type"], r["condition"].get("age")) for r in (d.get("lifecycle_config") or {}).get("rule", [])]')" == "[('Delete', 30)]" ]]; then
   pass "staging: lifecycle deletes at 30 days"; else fail "staging: lifecycle is not a single 30-day delete"; fi
 
