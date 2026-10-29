@@ -30,23 +30,32 @@ Everything below was checked against the providers' own docs on 2026-10-29.
 - The reply is the concatenated `text` blocks; thinking blocks are ignored.
 - The request id is the `request-id` response header.
 
-**OpenAI** (PR 4b). The Responses API, `POST https://api.openai.com/v1/responses`, not Chat Completions.
+**OpenAI.** The Responses API, `POST https://api.openai.com/v1/responses`, with `Authorization: Bearer <key>`. Chat Completions is not used: Responses is OpenAI's recommended API, and the Assistants API it replaced shut down on 2026-08-26. There is no version header to pin.
 
-- Responses is OpenAI's recommended API, and the Assistants API it replaced shut down on 2026-08-26.
 - We send `store: false`, so OpenAI does not keep our prompts; the API's default is to store them.
+- The system prompt goes in `instructions`, and the messages go in `input` as `{role, content}`.
+- The reply is the concatenated `output_text` parts of `message` items. Reasoning and other items are skipped.
+- `stop` is:
+  - `refusal` if any part is a `refusal`;
+  - `end` when `status` is `completed`;
+  - `max_tokens` when `status` is `incomplete` with `incomplete_details.reason` = `max_output_tokens`;
+  - `other` otherwise, including `content_filter` and `failed`.
 - The request id is the `x-request-id` response header.
 
 **Usage.** Each call is recorded as provider, model, step, `input_tokens`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens`, latency and request id.
 
-- `input_tokens` is every input token, cached or not. That is OpenAI's definition. Anthropic's `input_tokens` excludes cached tokens, so the adapter adds `cache_read_input_tokens` and `cache_creation_input_tokens` back.
+- `input_tokens` is every input token, cached or not. That is OpenAI's definition, so OpenAI's value is used as is. Anthropic's `input_tokens` excludes cached tokens, so the adapter adds `cache_read_input_tokens` and `cache_creation_input_tokens` back.
+- Cache counts come from Anthropic's two cache fields, and from OpenAI's `input_tokens_details.cached_tokens` and `input_tokens_details.cache_write_tokens`. Either OpenAI field counts as 0 when absent. The reference lists `cache_write_tokens`, but it doesn't say whether `input_tokens` includes it; we assume it does, like `cached_tokens`.
 - The cache counts are kept separately as well, because cached tokens are priced differently and week 16 cost tracking needs them apart.
 
 **Errors.**
 
 - A failed call raises `ModelCallError`, carrying the status, the provider's error type, the request id and `retryable`.
 - Retryable means 408, 429 or 5xx (Anthropic's 529 included), or no HTTP response at all.
+- One exception for OpenAI: a 429 whose `error.type` or `error.code` is a billing or quota limit is not retryable, because retrying won't help until someone adds credit or raises a limit. The codes are `insufficient_quota`, `credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded` and `organization_usage_limit_exceeded`.
+- OpenAI errors report `error.code` as the error type when present, and `error.type` otherwise; the code is the more specific cause.
 - Nothing retries yet; retries, budgets and fallback come in week 16.
-- The provider's error text is dropped for 401 and 403, because some providers quote the key back. Other error text is cut to 200 characters, and any copy of the key is replaced with `[redacted]`.
+- The provider's error text is dropped for 401 and 403, because OpenAI's 401 quotes the start and end of the key. Other error text is cut to 200 characters, and any copy of the key is replaced with `[redacted]`.
 
 **Logging.**
 

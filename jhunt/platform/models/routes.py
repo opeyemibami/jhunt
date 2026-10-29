@@ -17,8 +17,8 @@ from jhunt.platform.models.types import ModelConfigError
 
 ROUTES_FILE = "model_routes.toml"
 DEFAULT_STEP = "default"
-# Providers with an adapter. openai arrives in PR 4b, openrouter later.
-PROVIDERS = frozenset({"anthropic"})
+# Providers with an adapter. openrouter comes later, for eval sweeps.
+PROVIDERS = frozenset({"anthropic", "openai"})
 
 _STEP = re.compile(r"[a-z_]+(\.[a-z_]+)*")
 _MODEL = re.compile(r"[A-Za-z0-9._/-]+")

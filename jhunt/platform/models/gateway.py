@@ -10,7 +10,7 @@ import httpx
 from pydantic import SecretStr
 
 from jhunt.platform.config import Settings
-from jhunt.platform.models import anthropic_api
+from jhunt.platform.models import anthropic_api, openai_api
 from jhunt.platform.models.http import new_client
 from jhunt.platform.models.routes import Routes, load_routes
 from jhunt.platform.models.types import (
@@ -26,8 +26,8 @@ log = logging.getLogger(__name__)
 
 Adapter = Callable[[httpx.Client, SecretStr, str, ModelRequest], tuple[Reply, str | None]]
 # Must cover routes.PROVIDERS; a test checks they match.
-ADAPTERS: Mapping[str, Adapter] = {"anthropic": anthropic_api.call}
-KEY_VARIABLES = {"anthropic": "ANTHROPIC_API_KEY"}
+ADAPTERS: Mapping[str, Adapter] = {"anthropic": anthropic_api.call, "openai": openai_api.call}
+KEY_VARIABLES = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 
 
 class ModelGateway:
@@ -49,7 +49,7 @@ class ModelGateway:
         cls, settings: Settings, client: httpx.Client | None = None
     ) -> "ModelGateway":
         routes = load_routes(settings.jhunt_config_dir, settings.model_routes)
-        keys = {"anthropic": settings.anthropic_api_key}
+        keys = {"anthropic": settings.anthropic_api_key, "openai": settings.openai_api_key}
         return cls(routes, keys, client or new_client())
 
     def close(self) -> None:

@@ -44,7 +44,7 @@ def build_body(model: str, request: ModelRequest) -> dict[str, object]:
 
 
 def parse_reply(body: object) -> Reply:
-    """Raises KeyError or TypeError on a body that isn't a Messages response."""
+    """Raises AttributeError, KeyError or TypeError on a body that isn't a Messages response."""
     if not isinstance(body, dict):
         raise TypeError("response body is not a JSON object")
     # Only text blocks; thinking blocks are not part of the answer.
@@ -94,7 +94,7 @@ def call(
         raise redact(map_error(result.status, result.body, request_id), headers["x-api-key"])
     try:
         return parse_reply(result.body), request_id
-    except (KeyError, TypeError) as exc:
+    except (AttributeError, KeyError, TypeError) as exc:
         raise ModelCallError(
             PROVIDER, result.status, "invalid_response", type(exc).__name__, request_id, False
         ) from None

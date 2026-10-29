@@ -15,6 +15,7 @@ SETTINGS_VARS = [
     "POSTGRES_PORT",
     "JHUNT_CONFIG_DIR",
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
     "MODEL_ROUTES",
 ]
 
@@ -90,12 +91,14 @@ def test_config_dir_has_no_default(clean_env: pytest.MonkeyPatch) -> None:
 
 def test_model_settings_are_optional_and_empty_means_unset(clean_env: pytest.MonkeyPatch) -> None:
     set_required(clean_env)
-    assert Settings().anthropic_api_key is None  # type: ignore[call-arg]
+    s = Settings()  # type: ignore[call-arg]
+    assert (s.anthropic_api_key, s.openai_api_key) == (None, None)
 
     clean_env.setenv("ANTHROPIC_API_KEY", "")
+    clean_env.setenv("OPENAI_API_KEY", "")
     clean_env.setenv("MODEL_ROUTES", "")
     s = Settings()  # type: ignore[call-arg]
-    assert (s.anthropic_api_key, s.model_routes) == (None, None)
+    assert (s.anthropic_api_key, s.openai_api_key, s.model_routes) == (None, None, None)
 
 
 def test_api_key_is_not_printed(clean_env: pytest.MonkeyPatch) -> None:

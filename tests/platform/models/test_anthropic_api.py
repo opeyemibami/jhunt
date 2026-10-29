@@ -176,7 +176,9 @@ def test_call_timeout_is_retryable_without_status() -> None:
     )
 
 
-@pytest.mark.parametrize("body", [b"not json", b'{"content": []}', b"[]"])
+@pytest.mark.parametrize(
+    "body", [b"not json", b'{"content": []}', b"[]", b'{"content": [], "usage": null}']
+)
 def test_call_unexpected_200_body_is_invalid_response(body: bytes) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=body, headers={"request-id": "req_x"})

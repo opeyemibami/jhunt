@@ -35,11 +35,12 @@ class Settings(BaseSettings):
     # Model gateway. None means unset, and an empty value counts as unset. The
     # gateway requires a provider's key only when a route uses that provider.
     anthropic_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
     # Optional JSON object of step -> "provider:model", applied over
     # model_routes.toml. For local experiments only.
     model_routes: str | None = None
 
-    @field_validator("anthropic_api_key", "model_routes", mode="before")
+    @field_validator("anthropic_api_key", "openai_api_key", "model_routes", mode="before")
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value
