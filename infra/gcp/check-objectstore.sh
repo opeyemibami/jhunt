@@ -45,18 +45,34 @@ expect_ok() {
   local out
   if out="$("$@" 2>&1)"; then pass "$what"; else fail "${what}: $(last_line "$out")"; return 1; fi
 }
-# expect_refused <description> <command...>: the command must fail with a 403
-# (permission or retention). Any other failure, such as a 404 because an
-# earlier step already broke the record, is not proof and counts as a FAIL.
+# Refusal reasons, matched against gcloud's ERROR line. A permission refusal
+# names the missing permission; `storage cp` prints it without an HTTP status,
+# other commands as "HTTPError 403: ...". A retention refusal is always a 403.
+DENIED_DELETE='does not have storage\.objects\.delete access'
+# Changing an object's retention or holds is a PATCH: GCS checks
+# storage.objects.update first, then overrideUnlockedRetention. Either refusal holds.
+DENIED_UPDATE='does not have storage\.objects\.(update|overrideUnlockedRetention) access'
+RETAINED='HTTPError 403: Object .* is subject to .*retention'
+
+# expect_refused <description> <reason regex> <command...>: the command must fail,
+# its ERROR line must match the reason, and any HTTP status on it must be 403.
+# Any other failure (say a 404 because an earlier step already broke the record)
+# is not proof and counts as a FAIL.
 expect_refused() {
-  local what="$1"; shift
-  local out
+  local what="$1" reason="$2"; shift 2
+  local out line
   if out="$("$@" 2>&1)"; then
     fail "${what} was allowed"
-  elif [[ "$out" == *403* ]]; then
-    pass "${what} refused: $(last_line "$out")"
+    return
+  fi
+  line="$(printf '%s\n' "$out" | grep -m1 '^ERROR:' || true)"
+  line="${line%% This command is authenticated*}"
+  if [[ "$line" =~ HTTPError\ ([0-9]{3}) && "${BASH_REMATCH[1]}" != 403 ]]; then
+    fail "${what} failed with HTTP ${BASH_REMATCH[1]}, not 403: ${line}"
+  elif [[ "$line" =~ $reason ]]; then
+    pass "${what} refused: ${line}"
   else
-    fail "${what} failed, but not with a 403: $(last_line "$out")"
+    fail "${what} failed for another reason: ${line:-$(last_line "$out")}"
   fi
 }
 sha_of() { "$@" | sha256sum | cut -d' ' -f1; }
@@ -132,17 +148,17 @@ else
   fail "record A retention: mode ${mode_a}, until ${until_a}"
 fi
 
-expect_refused "overwrite A" as_app storage cp "$tmp/x.txt" "$rec_a"
-expect_refused "delete A (live)" as_app storage rm "$rec_a"
-expect_refused "delete A (generation ${gen_a})" as_app storage rm "${rec_a}#${gen_a}"
-expect_refused "shorten A's retention" \
+expect_refused "overwrite A" "$DENIED_DELETE" as_app storage cp "$tmp/x.txt" "$rec_a"
+expect_refused "delete A (live)" "$DENIED_DELETE" as_app storage rm "$rec_a"
+expect_refused "delete A (generation ${gen_a})" "$DENIED_DELETE" as_app storage rm "${rec_a}#${gen_a}"
+expect_refused "shorten A's retention" "$DENIED_UPDATE" \
   as_app storage objects update "$rec_a" --retain-until="$retain_1d" --override-unlocked-retention
-expect_refused "remove A's retention" \
+expect_refused "remove A's retention" "$DENIED_UPDATE" \
   as_app storage objects update "$rec_a" --clear-retention --override-unlocked-retention
-expect_refused "lock A's retention" \
+expect_refused "lock A's retention" "$DENIED_UPDATE" \
   as_app storage objects update "$rec_a" --retain-until="$retain_3y" --retention-mode=Locked --override-unlocked-retention
-expect_refused "set temporary hold on A" as_app storage objects update "$rec_a" --temporary-hold
-expect_refused "set event-based hold on A" as_app storage objects update "$rec_a" --event-based-hold
+expect_refused "set temporary hold on A" "$DENIED_UPDATE" as_app storage objects update "$rec_a" --temporary-hold
+expect_refused "set event-based hold on A" "$DENIED_UPDATE" as_app storage objects update "$rec_a" --event-based-hold
 
 for pair in "A ${rec_a} ${gen_a} ${sha_a}" "B ${rec_b} ${gen_b} ${sha_b}"; do
   read -r name obj gen want <<<"$pair"
@@ -157,12 +173,12 @@ for pair in "A ${rec_a} ${gen_a} ${sha_a}" "B ${rec_b} ${gen_b} ${sha_b}"; do
 done
 
 echo "== 4. owner on records"
-expect_refused "owner delete of A while retained" as_owner storage rm "${rec_a}#${gen_a}"
+expect_refused "owner delete of A while retained" "$RETAINED" as_owner storage rm "${rec_a}#${gen_a}"
 expect_ok "owner removes A's retention" \
   as_owner storage objects update "$rec_a" --clear-retention --override-unlocked-retention || true
 expect_ok "owner deletes A" as_owner storage rm "${rec_a}#${gen_a}" || true
 if as_owner storage objects describe "$rec_a" >/dev/null 2>&1; then fail "A still exists"; else pass "A is gone"; fi
-expect_refused "owner delete of B (retention untouched)" as_owner storage rm "${rec_b}#${gen_b}"
+expect_refused "owner delete of B (retention untouched)" "$RETAINED" as_owner storage rm "${rec_b}#${gen_b}"
 got_b="$(sha_of as_owner storage cat "${rec_b}#${gen_b}")"
 mode_b="$(object_field "$rec_b" '(d.get("retention_settings") or {}).get("mode")')"
 if [[ "$got_b" == "$sha_b" && "$mode_b" == "Unlocked" ]]; then

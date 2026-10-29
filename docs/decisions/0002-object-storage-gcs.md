@@ -33,7 +33,7 @@ The permission names below come from the GCS docs (IAM permissions reference, up
 | `storage.objects.create` | Upload a new object | yes (`roles/storage.objectCreator`) | yes |
 | `storage.objects.get`, `.list` | Read and list | yes (`roles/storage.objectViewer`) | yes |
 | `storage.objects.setRetention` | Add or update an object's retention; needed for an upload that carries retention | yes (custom `jhuntRetentionSetter`) | yes |
-| `storage.objects.overrideUnlockedRetention` | Shorten, remove or lock an existing Unlocked configuration (the `--override-unlocked-retention` flag) | **no** | yes |
+| `storage.objects.overrideUnlockedRetention` | Shorten, remove or lock an existing Unlocked configuration (the `--override-unlocked-retention` flag). The change is a PATCH, so it also needs `storage.objects.update` | **no** | yes |
 | `storage.objects.delete` | Delete an object; also needed to replace (overwrite) one | **no** | yes |
 | `storage.objects.update` | Edit metadata, including temporary and event-based holds | **no** | yes |
 | `storage.buckets.update` | Change bucket settings | **no** | (project owner) |
@@ -54,7 +54,7 @@ Each layer is checked by `infra/gcp/check-objectstore.sh`:
    - set a hold;
    - shorten, remove or lock a record's retention.
 
-   This gap is AGENTS.md hard rule 13.
+   This gap is AGENTS.md hard rule 13. Observed on the real buckets (2026-10-29): GCS refuses a retention change or hold for lack of `storage.objects.update` before it checks `overrideUnlockedRetention`. The app has neither, so either refusal holds.
 2. **Per-object retention: the guard against mistakes.** Until retain-until, nobody can delete or replace that generation without first removing its retention, which needs `overrideUnlockedRetention`. That stops an accidental delete by the owner or any future account with delete.
 3. **Versioning.** A principal with `delete` can still make a retained live object noncurrent. The bytes stay as a noncurrent generation. That's another reason the app must never get `delete` on records.
 4. **Soft delete** (GCS default, 7 days). Anything that does get deleted can be restored for a week.
