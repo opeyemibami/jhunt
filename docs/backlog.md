@@ -16,6 +16,7 @@ Deferred work that has a target week. One line per item, with where it came from
 ## Week 19
 
 - Langfuse: self-hosted with a GCS bucket, or Langfuse Cloud. (PR 2 review; design.md, Tracing and evals)
+- Gateway logs only ModelCallError; log unexpected adapter exceptions too, with the same fields and no text. (PR 4a review)
 
 ## PR 6 (CI)
 
