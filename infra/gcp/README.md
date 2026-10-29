@@ -4,19 +4,25 @@ Object storage and CI identity on Google Cloud (ADR 0002). The owner runs these 
 
 | File | What it does |
 |---|---|
-| `setup.sh` | Creates the two buckets, the `jhunt-app` and `jhunt-ci` service accounts, a one-permission custom role, and Workload Identity Federation for GitHub Actions. Safe to re-run. |
+| `setup.sh` | Creates the two buckets, the `jhunt-app` and `jhunt-ci` service accounts, three small custom roles, and Workload Identity Federation for GitHub Actions. Safe to re-run. |
 | `staging-lifecycle.json` | Staging bucket rule: delete objects older than 30 days. |
-| `check-objectstore.sh` | Proves the setup: what `jhunt-app` can and cannot do on each bucket, and that the owner can still delete a record after removing retention. |
+| `check-objectstore.sh` | Proves the setup: what `jhunt-app` can and cannot do on each bucket, and that the owner can unlock and delete one record while another stays protected. Cleans up after itself. |
 
 What gets created:
 
 | Resource | Settings |
 |---|---|
 | `gs://jhunt-staging-<suffix>` | Uniform access, public access blocked, 30-day lifecycle delete, no versioning, no retention |
-| `gs://jhunt-records-<suffix>` | Uniform access, public access blocked, object versioning, retention policy (default 10 years), **not locked** |
-| `jhunt-app` | `objectCreator` + `objectViewer` on both buckets; `jhuntObjectDeleter` (only `storage.objects.delete`) on staging |
+| `gs://jhunt-records-<suffix>` | Uniform access, public access blocked, object versioning, per-object retention enabled, **no** bucket retention policy |
+| `jhunt-app` | Both buckets: `objectCreator` + `objectViewer`. Staging: `jhuntObjectDeleter`. Records: `jhuntRetentionSetter` |
+| Your account | Records: `jhuntRecordsCurator`. Also `serviceAccountTokenCreator` on `jhunt-app`, so you can impersonate it instead of using a key |
 | `jhunt-ci` | Trusted by GitHub Actions runs from this repo (matched on numeric repo id); no bucket roles yet |
-| Your account | `serviceAccountTokenCreator` on `jhunt-app`, so you can impersonate it locally instead of using a key |
+
+| Custom role | Permissions |
+|---|---|
+| `jhuntObjectDeleter` | `storage.objects.delete` |
+| `jhuntRetentionSetter` | `storage.objects.setRetention` |
+| `jhuntRecordsCurator` | `storage.objects.get`, `.list`, `.update`, `.delete`, `.setRetention`, `.overrideUnlockedRetention` |
 
 No service account keys are created. Both buckets keep GCS's default 7-day soft delete.
 
@@ -24,33 +30,32 @@ No service account keys are created. Both buckets keep GCS's default 7-day soft 
 
 ```bash
 gcloud auth login
+gcloud config set project <project-id>
 
-# 1. Create everything. SUFFIX makes bucket names globally unique.
+# 1. Create everything. SUFFIX makes bucket names globally unique (lowercase letters and digits).
 GCP_PROJECT=<project-id> SUFFIX=<suffix> infra/gcp/setup.sh
-#    Optional: REGION=europe-west2 (default europe-west1), RECORDS_RETENTION=5y (default 10y)
 
 # 2. Copy the printed GCP_PROJECT, GCS_STAGING_BUCKET and GCS_RECORDS_BUCKET into .env.
 
 # 3. Local app credentials: impersonate jhunt-app, no key file.
 gcloud auth application-default login \
   --impersonate-service-account=jhunt-app@<project-id>.iam.gserviceaccount.com
-#    Put the path it prints into GOOGLE_APPLICATION_CREDENTIALS in .env.
+#    Put the credentials path it prints into GOOGLE_APPLICATION_CREDENTIALS in .env.
 
-# 4. Prove it.
+# 4. Prove it. Wait a couple of minutes after step 1 so new IAM bindings apply.
 GCP_PROJECT=<project-id> GCS_STAGING_BUCKET=jhunt-staging-<suffix> \
   GCS_RECORDS_BUCKET=jhunt-records-<suffix> infra/gcp/check-objectstore.sh
 ```
 
-New IAM bindings can take a minute or two to apply. If section 2 of the check fails with a permission error, wait and re-run; section 2 must pass before the refusals in section 3 mean anything.
+If section 2 of the check fails with a permission error, IAM hasn't caught up yet: wait and re-run. Section 2 must pass before the refusals in section 3 mean anything, and every refusal must be a 403.
 
 ## Deleting a record
 
-Records can't be deleted by the app at all, and can't be deleted by anyone while the retention policy is on. To delete one yourself:
+Each record carries its own Unlocked retention (3 years from when it was written). To delete one, remove that object's retention and delete it. Nothing else in the bucket is affected:
 
 ```bash
-gcloud storage buckets update gs://jhunt-records-<suffix> --clear-retention-period
+gcloud storage objects update 'gs://jhunt-records-<suffix>/<path>' --clear-retention --override-unlocked-retention
 gcloud storage rm 'gs://jhunt-records-<suffix>/<path>#<generation>'
-gcloud storage buckets update gs://jhunt-records-<suffix> --retention-period=10y
 ```
 
-While the policy is cleared, the whole bucket is unprotected, so keep that window short. `check-objectstore.sh` does exactly this for its own test object and restores the policy even if it fails part-way.
+The deleted object stays soft-deleted, and restorable, for 7 days.

@@ -6,14 +6,14 @@
 #
 # 1. Bucket settings are what setup.sh asked for.
 # 2. As jhunt-app on staging: write, overwrite and delete all work.
-# 3. As jhunt-app on records: write and read work; overwrite, delete, holds and
-#    retention changes are all refused; the original bytes and sha256 survive.
-# 4. As the owner on records: deleting the record is refused while the
-#    retention policy is on, and succeeds once it is removed. The policy is put
-#    back straight after, even if the script fails part-way.
+# 3. As jhunt-app on records: write two records with 3-year Unlocked retention.
+#    Delete, overwrite, shortening, removing or locking retention, and holds are
+#    all refused; bytes and sha256 are unchanged.
+# 4. As the owner: deleting a retained record is refused; removing retention on
+#    record A and deleting it works; record B stays protected and intact.
 #
-# Leaves nothing behind except soft-deleted copies (kept 7 days by default).
-# Exits non-zero if any check fails.
+# On exit (pass or fail) it removes everything it wrote. Deleted objects stay
+# soft-deleted for 7 days (GCS default). Exits non-zero if any check fails.
 set -euo pipefail
 
 : "${GCP_PROJECT:?set GCP_PROJECT}"
@@ -24,11 +24,15 @@ P=(--project="$GCP_PROJECT")
 APP_SA="jhunt-app@${GCP_PROJECT}.iam.gserviceaccount.com"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 staging_obj="gs://${GCS_STAGING_BUCKET}/_proof/${run_id}.txt"
-record="gs://${GCS_RECORDS_BUCKET}/_proof/${run_id}.txt"
+rec_a="gs://${GCS_RECORDS_BUCKET}/_proof/${run_id}-a.txt"
+rec_b="gs://${GCS_RECORDS_BUCKET}/_proof/${run_id}-b.txt"
 tmp="$(mktemp -d)"
 failures=0
-retention_cleared=""
-original_retention_s=""
+
+# RFC 3339 timestamps, computed in Python so this runs the same on Linux and macOS.
+ts() { python3 -c 'import datetime as d,sys; print((d.datetime.now(d.timezone.utc)+d.timedelta(days=float(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
+retain_3y="$(ts 1096)"   # 3 years, the record retention the app will use
+retain_1d="$(ts 1)"
 
 as_app() { gcloud "${P[@]}" --impersonate-service-account="$APP_SA" --verbosity=error "$@"; }
 as_owner() { gcloud "${P[@]}" --verbosity=error "$@"; }
@@ -41,88 +45,131 @@ expect_ok() {
   local out
   if out="$("$@" 2>&1)"; then pass "$what"; else fail "${what}: $(last_line "$out")"; return 1; fi
 }
-# expect_refused <description> <command...>: the command must fail.
+# expect_refused <description> <command...>: the command must fail with a 403
+# (permission or retention). Any other failure, such as a 404 because an
+# earlier step already broke the record, is not proof and counts as a FAIL.
 expect_refused() {
   local what="$1"; shift
   local out
-  if out="$("$@" 2>&1)"; then fail "${what} was allowed"; else pass "${what} refused: $(last_line "$out")"; fi
+  if out="$("$@" 2>&1)"; then
+    fail "${what} was allowed"
+  elif [[ "$out" == *403* ]]; then
+    pass "${what} refused: $(last_line "$out")"
+  else
+    fail "${what} failed, but not with a 403: $(last_line "$out")"
+  fi
 }
 sha_of() { "$@" | sha256sum | cut -d' ' -f1; }
-# bucket_field <bucket> <python expression over d, the describe JSON>
-bucket_field() {
-  as_owner storage buckets describe "gs://$1" --format=json |
-    python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$2"
+# json_eval <python expression over d> reads describe JSON on stdin.
+json_eval() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+bucket_field() { as_owner storage buckets describe "gs://$1" --format=json | json_eval "$2"; }
+# object_field <url> <expr>: prints "missing" if the object has no live version.
+object_field() {
+  local j
+  j="$(as_owner storage objects describe "$1" --format=json 2>/dev/null)" || { echo missing; return 0; }
+  json_eval "$2" <<<"$j"
 }
 
-restore_retention() {
-  if [[ -n "$retention_cleared" ]]; then
-    echo "      restoring retention policy (${original_retention_s}s) on gs://${GCS_RECORDS_BUCKET}"
-    as_owner storage buckets update "gs://${GCS_RECORDS_BUCKET}" --retention-period="PT${original_retention_s}S"
-    retention_cleared=""
-  fi
+cleanup() {
+  set +e
+  echo; echo "== cleanup"
+  as_owner storage rm "$staging_obj" >/dev/null 2>&1
+  local obj url
+  for obj in "$rec_a" "$rec_b"; do
+    # Every generation, live or not, may carry its own retention.
+    for url in $(as_owner storage ls --all-versions "$obj" 2>/dev/null); do
+      as_owner storage objects update "$url" --clear-retention --override-unlocked-retention >/dev/null 2>&1
+      as_owner storage rm "$url" >/dev/null 2>&1
+    done
+    if as_owner storage ls --all-versions "$obj" >/dev/null 2>&1; then
+      echo "      could not remove ${obj}; remove it by hand"
+    else
+      echo "      removed ${obj}"
+    fi
+  done
   rm -rf "$tmp"
 }
-trap restore_retention EXIT
+trap cleanup EXIT
 
 echo "== 1. bucket settings"
 if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" 'd.get("versioning_enabled")')" == "True" ]]; then
   pass "records: versioning on"; else fail "records: versioning off"; fi
-original_retention_s="$(bucket_field "$GCS_RECORDS_BUCKET" '(d.get("retention_policy") or {}).get("retentionPeriod", "")')"
-if [[ -n "$original_retention_s" && "$original_retention_s" != "0" ]]; then
-  pass "records: retention policy ${original_retention_s}s"; else fail "records: no retention policy"; fi
-if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" '(d.get("retention_policy") or {}).get("isLocked", False)')" == "False" ]]; then
-  pass "records: retention policy is NOT locked"; else fail "records: retention policy is locked"; fi
+if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" '(d.get("per_object_retention") or {}).get("mode")')" == "Enabled" ]]; then
+  pass "records: per-object retention enabled"; else fail "records: per-object retention not enabled"; fi
+if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" 'd.get("retention_policy")')" == "None" ]]; then
+  pass "records: no bucket retention policy"; else fail "records: has a bucket retention policy"; fi
 if [[ "$(bucket_field "$GCS_STAGING_BUCKET" 'd.get("retention_policy")')" == "None" ]]; then
   pass "staging: no retention policy"; else fail "staging: has a retention policy"; fi
 if [[ "$(bucket_field "$GCS_STAGING_BUCKET" '[(r["action"]["type"], r["condition"].get("age")) for r in (d.get("lifecycle_config") or {}).get("rule", [])]')" == "[('Delete', 30)]" ]]; then
   pass "staging: lifecycle deletes at 30 days"; else fail "staging: lifecycle is not a single 30-day delete"; fi
 
 echo "== 2. jhunt-app on staging"
-printf 'staging %s\n' "$run_id" > "$tmp/a.txt"
-printf 'staging v2 %s\n' "$run_id" > "$tmp/b.txt"
+printf 'staging %s\n' "$run_id" > "$tmp/s1.txt"
+printf 'staging v2 %s\n' "$run_id" > "$tmp/s2.txt"
 # These must succeed first: they prove impersonation and the app's roles are
 # live, so the refusals in section 3 are policy, not missing setup.
-expect_ok "write" as_app storage cp "$tmp/a.txt" "$staging_obj" || true
-expect_ok "overwrite" as_app storage cp "$tmp/b.txt" "$staging_obj" || true
+expect_ok "write" as_app storage cp "$tmp/s1.txt" "$staging_obj" || true
+expect_ok "overwrite" as_app storage cp "$tmp/s2.txt" "$staging_obj" || true
 expect_ok "delete" as_app storage rm "$staging_obj" || true
 
 echo "== 3. jhunt-app on records"
-printf 'original record %s\n' "$run_id" > "$tmp/orig.txt"
-printf 'tampered record %s\n' "$run_id" > "$tmp/tampered.txt"
-want_sha="$(sha256sum "$tmp/orig.txt" | cut -d' ' -f1)"
-expect_ok "write" as_app storage cp "$tmp/orig.txt" "$record" || exit 1
-gen="$(as_app storage objects describe "$record" --format='value(generation)')"
-got_sha="$(sha_of as_app storage cat "${record}#${gen}")"
-if [[ "$got_sha" == "$want_sha" ]]; then
-  pass "read back generation ${gen}, sha256 ${want_sha}"
+printf 'record A %s\n' "$run_id" > "$tmp/a.txt"
+printf 'record B %s\n' "$run_id" > "$tmp/b.txt"
+printf 'tampered %s\n' "$run_id" > "$tmp/x.txt"
+sha_a="$(sha256sum "$tmp/a.txt" | cut -d' ' -f1)"
+sha_b="$(sha256sum "$tmp/b.txt" | cut -d' ' -f1)"
+expect_ok "write record A with Unlocked retention until ${retain_3y}" \
+  as_app storage cp "$tmp/a.txt" "$rec_a" --retain-until="$retain_3y" --retention-mode=Unlocked || exit 1
+expect_ok "write record B with Unlocked retention until ${retain_3y}" \
+  as_app storage cp "$tmp/b.txt" "$rec_b" --retain-until="$retain_3y" --retention-mode=Unlocked || exit 1
+gen_a="$(object_field "$rec_a" 'd["generation"]')"
+gen_b="$(object_field "$rec_b" 'd["generation"]')"
+mode_a="$(object_field "$rec_a" '(d.get("retention_settings") or {}).get("mode")')"
+until_a="$(object_field "$rec_a" '(d.get("retention_settings") or {}).get("retainUntilTime")')"
+if [[ "$mode_a" == "Unlocked" && "$until_a" == "${retain_3y%Z}"* ]]; then
+  pass "record A retention: ${mode_a} until ${until_a}"
 else
-  fail "read back sha256 ${got_sha}"
+  fail "record A retention: mode ${mode_a}, until ${until_a}"
 fi
 
-expect_refused "overwrite" as_app storage cp "$tmp/tampered.txt" "$record"
-expect_refused "delete (live object)" as_app storage rm "$record"
-expect_refused "delete (generation ${gen})" as_app storage rm "${record}#${gen}"
-expect_refused "set temporary hold" as_app storage objects update "$record" --temporary-hold
-expect_refused "clear bucket retention" as_app storage buckets update "gs://${GCS_RECORDS_BUCKET}" --clear-retention-period
-expect_refused "shorten bucket retention" as_app storage buckets update "gs://${GCS_RECORDS_BUCKET}" --retention-period=1s
+expect_refused "overwrite A" as_app storage cp "$tmp/x.txt" "$rec_a"
+expect_refused "delete A (live)" as_app storage rm "$rec_a"
+expect_refused "delete A (generation ${gen_a})" as_app storage rm "${rec_a}#${gen_a}"
+expect_refused "shorten A's retention" \
+  as_app storage objects update "$rec_a" --retain-until="$retain_1d" --override-unlocked-retention
+expect_refused "remove A's retention" \
+  as_app storage objects update "$rec_a" --clear-retention --override-unlocked-retention
+expect_refused "lock A's retention" \
+  as_app storage objects update "$rec_a" --retain-until="$retain_3y" --retention-mode=Locked --override-unlocked-retention
+expect_refused "set temporary hold on A" as_app storage objects update "$rec_a" --temporary-hold
+expect_refused "set event-based hold on A" as_app storage objects update "$rec_a" --event-based-hold
 
-live_gen="$(as_app storage objects describe "$record" --format='value(generation)')"
-after_sha="$(sha_of as_app storage cat "${record}#${gen}")"
-if [[ "$live_gen" == "$gen" && "$after_sha" == "$want_sha" ]]; then
-  pass "original survives: live generation ${gen}, sha256 unchanged"
-else
-  fail "original changed: live generation ${live_gen}, sha256 ${after_sha}"
-fi
+for pair in "A ${rec_a} ${gen_a} ${sha_a}" "B ${rec_b} ${gen_b} ${sha_b}"; do
+  read -r name obj gen want <<<"$pair"
+  live="$(object_field "$obj" 'd["generation"]')"
+  got="$(sha_of as_app storage cat "${obj}#${gen}")"
+  mode="$(object_field "$obj" '(d.get("retention_settings") or {}).get("mode")')"
+  if [[ "$live" == "$gen" && "$got" == "$want" && "$mode" == "Unlocked" ]]; then
+    pass "record ${name} intact: generation ${gen}, sha256 ${want}, retention ${mode}"
+  else
+    fail "record ${name} changed: live ${live}, sha256 ${got}, retention ${mode}"
+  fi
+done
 
 echo "== 4. owner on records"
-expect_refused "owner delete while retention is on" as_owner storage rm "${record}#${gen}"
-echo "      removing retention policy (unlocked, so the owner may)"
-retention_cleared=yes
-as_owner storage buckets update "gs://${GCS_RECORDS_BUCKET}" --clear-retention-period
-expect_ok "owner delete after retention removed" as_owner storage rm "${record}#${gen}" || true
-restore_retention
-if [[ "$(bucket_field "$GCS_RECORDS_BUCKET" '(d.get("retention_policy") or {}).get("retentionPeriod", "")')" == "$original_retention_s" ]]; then
-  pass "retention policy restored to ${original_retention_s}s"; else fail "retention policy NOT restored"; fi
+expect_refused "owner delete of A while retained" as_owner storage rm "${rec_a}#${gen_a}"
+expect_ok "owner removes A's retention" \
+  as_owner storage objects update "$rec_a" --clear-retention --override-unlocked-retention || true
+expect_ok "owner deletes A" as_owner storage rm "${rec_a}#${gen_a}" || true
+if as_owner storage objects describe "$rec_a" >/dev/null 2>&1; then fail "A still exists"; else pass "A is gone"; fi
+expect_refused "owner delete of B (retention untouched)" as_owner storage rm "${rec_b}#${gen_b}"
+got_b="$(sha_of as_owner storage cat "${rec_b}#${gen_b}")"
+mode_b="$(object_field "$rec_b" '(d.get("retention_settings") or {}).get("mode")')"
+if [[ "$got_b" == "$sha_b" && "$mode_b" == "Unlocked" ]]; then
+  pass "record B still protected and intact"
+else
+  fail "record B: sha256 ${got_b}, retention ${mode_b}"
+fi
 
 echo
 if (( failures > 0 )); then echo "${failures} check(s) failed"; exit 1; fi
