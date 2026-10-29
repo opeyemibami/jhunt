@@ -20,3 +20,6 @@ Deferred work that has a target week. One line per item, with where it came from
 ## PR 6 (CI)
 
 - Set the GitHub repository variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_CI_SERVICE_ACCOUNT` from `infra/gcp/setup.sh`'s output. (PR 2)
+- CI gets its own `jhunt-ci-<suffix>` bucket with no retention, so tests never need the owner's override; grant `jhunt-ci` access to it in `setup.sh`. (PR 3 review)
+- Secret scan in CI: gitleaks, pinned by SHA, scanning the full git history; any detected secret fails the build. (PR 3 review)
+- `pytest tests/guarantees` exits 5 while the folder is empty; CI accepts exit 5 for that step only, until the first guarantee test lands in week 1. (PR 3 review)

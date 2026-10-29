@@ -163,7 +163,7 @@ Each guarantee names its mechanism, its limit and the test that proves it. The t
 
 | Guarantee | Mechanism | Limit | Test |
 | --- | --- | --- | --- |
-| A captured job description is never lost or altered | Stored in versioned object storage with a retention policy; sha256 checked on read | Only what the page showed at capture time | Delete and overwrite attempts fail; hash mismatch is detected |
+| A captured job description is never lost or altered | Records bucket: per-object Unlocked retention set on write, versioning, and no delete permission for the app (ADR 0002); sha256 checked on read | Only what the page showed at capture time | Delete and overwrite attempts fail; hash mismatch is detected |
 | A posting is captured once | Unique dedupe key on normalised URL plus company and title | Reposts with changed titles become new postings | Capture the same posting twice in parallel: one application |
 | A forwarded email is processed once | Unique Gmail message id | A recruiter sending two separate emails is two events | Deliver the same push twice: one event |
 | A stage update is never lost | Event written in the same transaction as the stage change | Low-confidence emails wait for you | Kill the worker mid-update; resume shows one consistent stage |

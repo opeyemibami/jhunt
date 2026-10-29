@@ -3,7 +3,12 @@ name = "jhunt"
 version = "0.0.0"
 description = "Job-search assistant on a reusable AI workflow platform"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "alembic==1.20.0",
+    "psycopg[binary]==3.3.6",
+    "pydantic-settings==2.16.0",
+    "sqlalchemy==2.1.4",
+]
 
 [project.scripts]
 jhunt-worker = "jhunt.platform.runtime.worker:main"
@@ -25,6 +30,11 @@ dev = [
     "pytest==9.1.1",
     "ruff==0.17.1",
 ]
+
+[tool.alembic]
+script_location = "%(here)s/migrations"
+# 0001_baseline.py: revision ids are set by hand with --rev-id, in order.
+file_template = "%%(rev)s_%%(slug)s"
 
 [tool.ruff]
 line-length = 100
