@@ -7,7 +7,6 @@ not on the first call that uses it.
 """
 
 import json
-import os  # deliberate F401 to prove CI fails; reverted next commit
 import re
 import tomllib
 from collections.abc import Mapping
