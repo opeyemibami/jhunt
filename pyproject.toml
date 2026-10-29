@@ -1,0 +1,44 @@
+[project]
+name = "jhunt"
+version = "0.0.0"
+description = "Job-search assistant on a reusable AI workflow platform"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "import-linter==2.15",
+    "mypy==2.4.0",
+    "pytest==9.1.1",
+    "ruff==0.17.1",
+]
+
+[tool.uv]
+# Not built or installed as a wheel: everything runs from the repo root,
+# where `jhunt` is importable as a plain directory.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+
+[tool.importlinter]
+root_package = "jhunt"
+
+[[tool.importlinter.contracts]]
+name = "jhunt.platform never imports jhunt.workflows or jhunt.api"
+type = "forbidden"
+source_modules = ["jhunt.platform"]
+forbidden_modules = ["jhunt.workflows", "jhunt.api"]
