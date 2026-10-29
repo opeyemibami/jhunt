@@ -36,7 +36,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: "0.9.11"
+          version-file: pyproject.toml # [tool.uv] required-version
           enable-cache: true
           cache-dependency-glob: uv.lock
 
@@ -66,14 +66,19 @@ jobs:
 
       - name: pytest tests/guarantees
         run: |
-          # Exit 5 means "no tests collected". tests/guarantees is empty until the
-          # first guarantee test lands in week 1; see docs/backlog.md. Accepted for
-          # this step only. Every other exit code fails as usual.
+          # Exit 5 means "no tests collected". tests/guarantees has no test files
+          # until the first guarantee test lands in week 1; see docs/backlog.md.
+          # Exit 5 is accepted only while there are no test_*.py files at all: if
+          # test files exist and pytest still collects nothing, that is a failure.
           set +e
           uv run pytest tests/guarantees
           code=$?
           if [ "$code" -eq 5 ]; then
-            echo "::warning::tests/guarantees has no tests yet (exit 5 accepted until week 1)"
+            if find tests/guarantees -name 'test_*.py' | grep -q .; then
+              echo "::error::tests/guarantees has test files but pytest collected none"
+              exit 1
+            fi
+            echo "::warning::tests/guarantees has no test files yet (exit 5 accepted until week 1)"
             exit 0
           fi
           exit "$code"
