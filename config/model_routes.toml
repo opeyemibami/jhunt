@@ -1,0 +1,9 @@
+# Which provider and model serve each model step, as "provider:model".
+# Reviewed like code. Steps without a route use "default". Step keys contain
+# dots, so quote them: "scout.score" = "anthropic:claude-sonnet-5-5".
+# MODEL_ROUTES (JSON) can override keys for local experiments; see .env.example.
+
+[routes]
+# Cheap by default. Steps that need more quality get explicit routes, chosen
+# by the week 17 evals.
+default = "anthropic:claude-haiku-5-5"

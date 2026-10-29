@@ -182,6 +182,6 @@ Title: `<subsystem>: <change>`. Body must answer:
 - How it fails, and what the owner sees when it does:
 - Migration included (yes or no):
 
-Keep pull requests under about 400 changed lines, excluding generated files and migrations.
+Keep pull requests under about 400 changed lines of non-test code, excluding generated files and migrations.
 
 Never paste .env values, tokens, licence text, credential file contents or personal email addresses into PR bodies, comments or commit messages. Scrub command output before pasting it.
