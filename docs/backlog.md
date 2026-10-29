@@ -7,7 +7,7 @@ Deferred work that has a target week. One line per item, with where it came from
 - Worker composition root: the worker can't live in `jhunt.platform.runtime`, because it must load workflow graphs. Add a top layer (for example `jhunt.app`) above workflows, move the `jhunt-worker` entry point there, and put it on top of the layers contract. (PR 1 review)
 - Artifacts: every records upload hard-codes Unlocked mode and 3-year retention, with tests for both. The app must never be able to choose the mode or date. (ADR 0002, residual risk; PR 2 review)
 - Artifacts: the per-application delete command lists every generation (live and noncurrent), clears retention on each and deletes each, with a test. (ADR 0002, "Deleting an application's records"; PR 2 review)
-- Verify what LangGraph re-runs after a crash, and update AGENTS.md if it differs from "re-runs the whole interrupted step". (ADR 0003, PR 5)
+- Verify what LangGraph re-runs after a crash, and update AGENTS.md if it differs from "re-runs the whole interrupted step". (ADR 0004, PR 5)
 
 ## Week 3
 

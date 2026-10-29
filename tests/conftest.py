@@ -1,5 +1,6 @@
 """Shared fixtures. Database tests use the local Postgres from docker-compose.yml."""
 
+import os
 import uuid
 from collections.abc import Iterator
 
@@ -7,6 +8,16 @@ import pytest
 from sqlalchemy import URL, create_engine, pool, text
 
 from jhunt.platform.config import Settings, get_settings
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    # Live tests spend real money and need real keys: opt in explicitly.
+    if os.environ.get("RUN_LIVE_MODEL_TESTS") == "1":
+        return
+    skip = pytest.mark.skip(reason="live provider call; set RUN_LIVE_MODEL_TESTS=1 to run")
+    for item in items:
+        if "live" in item.keywords:
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

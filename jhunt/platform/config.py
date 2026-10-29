@@ -7,8 +7,9 @@ needs them.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -25,6 +26,23 @@ class Settings(BaseSettings):
     # connect to whatever Postgres happens to be listening on localhost:5432.
     postgres_host: str
     postgres_port: int
+
+    # Directory holding the non-secret config files from git, such as
+    # model_routes.toml. Required, with no default, so the app never guesses
+    # where its config is from the working directory.
+    jhunt_config_dir: Path
+
+    # Model gateway. None means unset, and an empty value counts as unset. The
+    # gateway requires a provider's key only when a route uses that provider.
+    anthropic_api_key: SecretStr | None = None
+    # Optional JSON object of step -> "provider:model", applied over
+    # model_routes.toml. For local experiments only.
+    model_routes: str | None = None
+
+    @field_validator("anthropic_api_key", "model_routes", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, value: object) -> object:
+        return None if value == "" else value
 
     def database_url(self, database: str | None = None) -> URL:
         """SQLAlchemy URL for psycopg 3. Its str() hides the password."""
