@@ -73,7 +73,7 @@ Anything internal and reversible is automated; anything that leaves the system i
 
 ## Architecture
 
-&#91;embedded content: architecture · clients, runtime, platform services, storage, external services\]
+![Architecture](architecture.png)
 
 Every call to the outside world leaves through the tool or model gateway; dashed boxes are external services, and the shaded block is the platform you build and contribute from.
 
@@ -229,37 +229,20 @@ The platform and the workflows live in separate packages, so the week 22 test ca
 
 ```
 repo/
-  platform/          # execution layer: never imports from workflows/
-    runtime/         # run queue, leases, worker, versioned graph registry
-    timers/          # timers table, tick handler
-    gateway/         # tool registry, autonomy policy, idempotency, audit
-    memory/          # memory service over the LangGraph store
-    models/          # model gateway: budgets, fallback, structured output
-    artifacts/       # object storage, hashes, retention
-    events/          # event log, cross-thread messages
-    observability/   # OpenTelemetry setup, cost tracking
-  workflows/         # one folder per workflow: graph, prompts, tools it uses
-    scout/  capture/  application_pack/  workspace/  tracker/  prep/  funnel/
-  api/               # FastAPI: auth, routes, webhooks
-  web/               # Next.js app
-  evals/             # datasets, judges, fact-bank checks
-  infra/             # Terraform
-  docs/              # design notes, deep-dives, decision records
-  AGENTS.md          # the rules below, for the coding agent
+  jhunt/               # one Python package; a top-level platform/ would shadow the stdlib module (ADR 0001)
+    platform/          # execution layer: never imports jhunt.workflows or jhunt.api
+      runtime/ timers/ gateway/ memory/ models/ artifacts/ events/ observability/
+    workflows/         # one package per workflow; workflows never import each other
+      scout/ capture/ application_pack/ workspace/ tracker/ prep/ funnel/
+    api/               # FastAPI
+  config/              # non-secret app config in git, e.g. model_routes.toml
+  migrations/          # Alembic
+  web/  evals/  infra/  tests/
+  docs/                # design.md (this doc), architecture.png, decisions/
+  AGENTS.md            # rules for the coding agent
 ```
 
-**Rules for the coding agent (copy into AGENTS.md):**
-
-1. Read this design and the relevant decision record before changing a subsystem
-2. `platform/` never imports from `workflows/`; CI fails if it does
-3. Every guarantee in the guarantees table has a test; a change that touches one must keep its test passing
-4. Write the failing test first for any bug or guarantee
-5. No side effect outside the tool gateway; no tool call without an idempotency key
-6. Nothing sends email, messages or applications; only the send service may, and only with a valid approval
-7. Every drafted claim cites fact ids; never add skills, numbers or experience that aren't in the fact bank
-8. Schema changes go through migrations; never edit snapshots, submissions or events
-9. No secrets in code, logs or prompts
-10. Each pull request states which subsystem it touches, what guarantee it affects, and how it was tested
+The rules for the coding agent live in AGENTS.md at the repo root. This doc says what the system does; AGENTS.md says how code gets written. If they conflict, the agent stops and asks.
 
 **Your role:** you design, review and test; the agent writes code. You must be able to explain every line that touches durable execution, memory and the tool gateway, since those are what interviews will probe.
 

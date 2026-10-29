@@ -5,6 +5,19 @@ description = "Job-search assistant on a reusable AI workflow platform"
 requires-python = ">=3.12,<3.13"
 dependencies = []
 
+[project.scripts]
+jhunt-worker = "jhunt.platform.runtime.worker:main"
+jhunt-api = "jhunt.api.main:main"
+
+[build-system]
+requires = ["uv_build==0.13.1"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The package lives at the repo root (jhunt/), not under src/.
+module-name = "jhunt"
+module-root = ""
+
 [dependency-groups]
 dev = [
     "import-linter==2.15",
@@ -12,11 +25,6 @@ dev = [
     "pytest==9.1.1",
     "ruff==0.17.1",
 ]
-
-[tool.uv]
-# Not built or installed as a wheel: everything runs from the repo root,
-# where `jhunt` is importable as a plain directory.
-package = false
 
 [tool.ruff]
 line-length = 100
@@ -31,7 +39,6 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
 addopts = "-ra --strict-markers"
 
 [tool.importlinter]
@@ -42,3 +49,21 @@ name = "jhunt.platform never imports jhunt.workflows or jhunt.api"
 type = "forbidden"
 source_modules = ["jhunt.platform"]
 forbidden_modules = ["jhunt.workflows", "jhunt.api"]
+
+[[tool.importlinter.contracts]]
+name = "api above workflows above platform"
+type = "layers"
+layers = ["jhunt.api", "jhunt.workflows", "jhunt.platform"]
+
+[[tool.importlinter.contracts]]
+name = "workflows never import each other"
+type = "independence"
+modules = [
+    "jhunt.workflows.scout",
+    "jhunt.workflows.capture",
+    "jhunt.workflows.application_pack",
+    "jhunt.workflows.workspace",
+    "jhunt.workflows.tracker",
+    "jhunt.workflows.prep",
+    "jhunt.workflows.funnel",
+]
