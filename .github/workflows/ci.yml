@@ -1,0 +1,101 @@
+# Every command from AGENTS.md "Commands", plus a secret scan over the full history.
+# Actions and images are pinned by commit SHA or digest; the comment gives the version.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Dummy values for the throwaway CI database. CI uses no repository secrets,
+      # no model keys (live tests stay skipped) and no GCP.
+      POSTGRES_USER: jhunt
+      POSTGRES_PASSWORD: ci-only-not-a-secret
+      POSTGRES_DB: jhunt
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      JHUNT_CONFIG_DIR: ./config
+      LANGGRAPH_STRICT_MSGPACK: "true"
+      LANGSMITH_TRACING: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version-file: pyproject.toml # [tool.uv] required-version
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Start Postgres (docker-compose.yml)
+        run: docker compose up -d --wait db
+
+      - name: uv sync
+        run: uv sync --locked
+
+      - name: alembic upgrade head
+        run: uv run alembic upgrade head
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy jhunt
+
+      - name: lint-imports
+        run: uv run lint-imports
+
+      - name: pytest
+        run: uv run pytest
+
+      - name: pytest tests/guarantees
+        run: |
+          # Exit 5 means "no tests collected". tests/guarantees has no test files
+          # until the first guarantee test lands in week 1; see docs/backlog.md.
+          # Exit 5 is accepted only while there are no test_*.py files at all: if
+          # test files exist and pytest still collects nothing, that is a failure.
+          set +e
+          uv run pytest tests/guarantees
+          code=$?
+          if [ "$code" -eq 5 ]; then
+            if find tests/guarantees -name 'test_*.py' | grep -q .; then
+              echo "::error::tests/guarantees has test files but pytest collected none"
+              exit 1
+            fi
+            echo "::warning::tests/guarantees has no test files yet (exit 5 accepted until week 1)"
+            exit 0
+          fi
+          exit "$code"
+
+  secret-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the full history, not just the tip
+          persist-credentials: false
+
+      # gitleaks v8.30.1. Any finding exits non-zero and fails the build.
+      # --redact keeps matched values out of the log.
+      - name: gitleaks (full history)
+        run: >
+          docker run --rm -v "$PWD:/repo:ro"
+          ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git --redact --no-banner /repo

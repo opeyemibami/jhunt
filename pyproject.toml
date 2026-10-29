@@ -22,6 +22,11 @@ jhunt-api = "jhunt.api.main:main"
 requires = ["uv_build==0.13.1"]
 build-backend = "uv_build"
 
+[tool.uv]
+# The one place uv is pinned. Local uv refuses to run at another version, and
+# CI's setup-uv installs exactly this one (version-file in ci.yml).
+required-version = "==0.9.11"
+
 [tool.uv.build-backend]
 # The package lives at the repo root (jhunt/), not under src/.
 module-name = "jhunt"
