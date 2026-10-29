@@ -32,16 +32,16 @@ Where it runs:
 |---|---|---|
 | api, worker, web | Containers | Cloud Run services |
 | Database | `pgvector/pgvector:pg16` container | Cloud SQL |
-| Object storage | AIStor Free (MinIO) with versioning and object lock; see ADR 0002 | Cloud Storage with versioning and retention |
+| Object storage | Cloud Storage from day one: staging and records buckets; see ADR 0002 | Same |
 | Scheduler | Cron container calling `POST /internal/tick` every minute | Cloud Scheduler calling the same endpoint |
 | Gmail intake | Pull subscription on a Pub/Sub topic in GCP | Push subscription to the API |
 | Secrets | Untracked `.env` file | Secret Manager, injected as env vars |
-| Langfuse | Self-hosted containers | Same |
+| Langfuse | Not until week 19 | Decided then |
 | Deploy | `docker compose` | Terraform in `infra/` |
 
 Migration must be a config change. So:
 
-- Storage goes through `jhunt/platform/artifacts` with an S3-compatible backend now and a GCS backend later. No other code touches a storage SDK.
+- Storage goes through `jhunt/platform/artifacts`, backed by GCS. No other code touches a storage SDK. The app authenticates with Application Default Credentials (impersonating `jhunt-app` locally); never a JSON key.
 - Config and secrets come only from environment variables. No code calls Secret Manager or any cloud metadata API.
 - The scheduler is only an HTTP call to the tick endpoint. Nothing assumes cron or Cloud Scheduler.
 - Model calls go only through `jhunt/platform/models`, which calls provider REST APIs with httpx. No other code calls a model provider.
@@ -78,7 +78,7 @@ tests/           # mirrors the packages; tests/guarantees/ holds the guarantee t
 
 ```
 uv sync                         # install
-docker compose up -d db objectstore   # local Postgres with pgvector, and the object store
+docker compose up -d db         # local Postgres with pgvector
 uv run alembic upgrade head     # migrate
 uv run pytest                   # all tests
 uv run pytest tests/guarantees  # guarantee tests only
@@ -103,6 +103,7 @@ Every command above must pass before you open a pull request.
 10. Autonomy levels live in configuration (`autonomy_settings` table), never in code or prompts.
 11. One active run per thread. Never bypass the lease.
 12. A thread keeps the graph version it started on. Never change a registered graph version in place; register a new one.
+13. `jhunt-app` never gets delete, retention-override or hold permissions on the records bucket. That IAM gap is what makes records immutable; retention only guards against mistakes by other accounts.
 
 ## Autonomy policy
 
@@ -152,9 +153,9 @@ Each guarantee has a test in `tests/guarantees/`. These are acceptance criteria.
 | Nothing is sent without approval | `test_send_requires_approval.py`: edit after approval; send refused until re-approved |
 | No claim without a fact | `test_fact_bank.py`: draft with an unsupported claim or changed number is blocked |
 
-Crash tests kill a real worker process (`docker kill` or SIGKILL), not a mocked one. Use the local Postgres and object store, never SQLite or a fake object store.
+Crash tests kill a real worker process (`docker kill` or SIGKILL), not a mocked one. Use the local Postgres and the real GCS buckets, never SQLite or a fake object store.
 
-Backups: a nightly `pg_dump` and object store replication go off the server, and `tests/ops/test_restore.py` restores the latest dump into a scratch database. The snapshot guarantee depends on it.
+Backups: a nightly `pg_dump` goes off the server (GCS already keeps the objects), and `tests/ops/test_restore.py` restores the latest dump into a scratch database. The snapshot guarantee depends on it.
 
 ## How to work
 

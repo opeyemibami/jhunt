@@ -91,18 +91,18 @@ Runs on your own server first with Docker Compose, then moves to GCP in one sess
 | Timers and schedules | Timers table plus a cron container calling the tick endpoint every minute | Cloud Scheduler calling the same endpoint | LangGraph has no durable timer of its own; verify in week 1 |
 | Database | Postgres 16 with pgvector; nightly pg\_dump off the server, with a restore test | Cloud SQL Postgres with pgvector | App tables, checkpoints, memory store, queue, timers, events, audit in one place |
 | Memory | LangGraph store on Postgres with a vector index, behind your memory service | Same | Scoped, validated memory |
-| Artifacts | MinIO with versioning and object lock, replicated off the server; hashes in Postgres | Cloud Storage with versioning and a retention policy | Snapshots and submissions can't be altered |
+| Artifacts | Cloud Storage from day one: a staging bucket (30-day expiry) and a records bucket (versioning, per-object retention); the app account has no delete on records; hashes in Postgres | Same | Snapshots and submissions can't be altered |
 | Email intake | Dedicated Gmail address; Gmail API watch to a Pub/Sub topic in GCP, pulled by your server | Same, pushed to the API | Forwarded recruiter mail and job alerts |
 | Model gateway | Internal module with Anthropic and OpenAI adapters on the main path, an OpenRouter adapter for eval sweeps; provider and model per step in config; fallback across providers | Same | Budgets, retries, schema repair and provider choice in one place |
 | Web fetch and render | httpx, plus Playwright in a separate job container | Cloud Run job | Snapshots as text, HTML and PDF |
-| Tracing and evals | OpenTelemetry to self-hosted Langfuse; eval datasets in Langfuse plus pytest | Same | Your secondary open-source project |
+| Tracing and evals | OpenTelemetry to Langfuse, set up in week 19 (self-hosted with a GCS bucket, or Langfuse Cloud); eval datasets in Langfuse plus pytest | Same | Your secondary open-source project |
 | Calendar | Google Calendar API | Same | Interview holds on your calendar |
 | Secrets | Environment variables from an untracked .env file | Secret Manager, injected as environment variables | No code change at migration |
 | Deploy and CI | Docker Compose; GitHub Actions | Terraform; GitHub Actions | Standard production setup |
 
 Four seams keep the migration a config change:
 
-- Storage sits behind one interface with a MinIO backend now and a GCS backend later
+- Storage sits behind one interface, backed by GCS from day one, using Application Default Credentials and never a key file
 - Config and secrets come only from environment variables
 - The scheduler is only an HTTP call to the tick endpoint
 - Separate Gmail tokens: the worker gets read-only and calendar scopes, the send service alone gets send scope
@@ -208,7 +208,7 @@ The system grows with the plan's subsystem blocks, and something useful for your
 
 | Plan weeks | Subsystem block | What gets built | Usable result |
 | --- | --- | --- | --- |
-| 0 | Setup | Repo, Docker Compose on your server (Postgres with pgvector, MinIO, Langfuse), LangGraph with the Postgres checkpointer, model gateway with Anthropic and OpenAI adapters, CI | A hello-world graph that survives a restart |
+| 0 | Setup | Repo, Docker Compose on your server (Postgres with pgvector), GCS buckets and service accounts, LangGraph with the Postgres checkpointer, model gateway with Anthropic and OpenAI adapters, CI | A hello-world graph that survives a restart |
 | 1 to 2 | Durable execution | Run queue with leases, worker, application lifecycle thread, Capture with snapshots | Pick a job; its description is kept for good |
 | 3 to 4 | Durable execution | Tool gateway with idempotency keys, Scout with fan-out and retries, submission recording | **Daily digest, captured jobs, recorded submissions** |
 | 5 to 6 | Durable execution | Timers and the tick, graph versioning, email intake and Tracker with manual confirm | Follow-up reminders; stages from forwarded emails |
