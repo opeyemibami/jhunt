@@ -22,6 +22,7 @@ from sqlalchemy import Engine
 
 from jhunt.platform.runtime import queue
 from jhunt.platform.runtime.registry import Registry
+from jhunt.platform.runtime.threads import check_versions
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +42,12 @@ def run_worker(
     idle_seconds: float = 1.0,
     stop: threading.Event | None = None,
 ) -> None:
-    """Claim and process runs until `stop` is set. One run at a time."""
+    """Claim and process runs until `stop` is set. One run at a time.
+
+    Raises VersionChanged, before claiming anything, if a registered version's
+    graph differs from the one first recorded for it (hard rule 12).
+    """
+    check_versions(engine, registry)
     stop = stop or threading.Event()
     while not stop.is_set():
         run = queue.claim(engine, lease_seconds)
@@ -117,36 +123,6 @@ def process_run(
         # The lease was lost between the last heartbeat and now. The new owner
         # will redo the work from the last checkpoint; nothing more to do here.
         log.warning("run %s: lost the lease before closing it", run.id)
-
-
-def enqueue_resume(
-    engine: Engine,
-    conninfo: str,
-    registry: Registry,
-    thread_id: str,
-    workflow: str,
-    version: int,
-    value: Any,
-) -> int:
-    """Queue a resume run that answers the interrupt the thread waits at now.
-
-    The run records that interrupt's id, so its value can only ever answer that
-    interrupt, even if a retry finds the thread waiting somewhere else (ADR 0005).
-    """
-    builder = registry.get(workflow, version)
-    if builder is None:
-        raise ValueError(f"not registered: workflow {workflow!r} version {version}")
-    with Connection.connect(conninfo, autocommit=True, row_factory=dict_row) as conn:
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-        pending = builder(PostgresSaver(conn)).get_state(config).interrupts
-    if len(pending) != 1:
-        raise ValueError(
-            f"thread {thread_id!r} is not waiting at an interrupt"
-            if not pending
-            else f"thread {thread_id!r} waits at {len(pending)} interrupts; expected one"
-        )
-    payload = {"interrupt_id": pending[0].id, "value": value}
-    return queue.enqueue(engine, thread_id, workflow, version, "resume", payload)
 
 
 @dataclass(frozen=True)

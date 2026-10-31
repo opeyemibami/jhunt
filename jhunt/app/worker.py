@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 
 from jhunt.app.registry import build_registry
 from jhunt.platform.config import get_settings
+from jhunt.platform.runtime.threads import VersionChanged
 from jhunt.platform.runtime.worker import run_worker
 
 log = logging.getLogger("jhunt.worker")
@@ -31,10 +32,15 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
     log.info("jhunt-worker started")
-    run_worker(
-        create_engine(settings.database_url(), pool_pre_ping=True),
-        conninfo.render_as_string(hide_password=False),
-        build_registry(),
-        stop=stop,
-    )
+    try:
+        run_worker(
+            create_engine(settings.database_url(), pool_pre_ping=True),
+            conninfo.render_as_string(hide_password=False),
+            build_registry(),
+            stop=stop,
+        )
+    except VersionChanged as exc:
+        # A deploy changed a registered graph in place. Refuse to run it.
+        log.critical("%s", exc)
+        raise SystemExit(f"jhunt-worker: {exc}") from None
     log.info("jhunt-worker stopped")

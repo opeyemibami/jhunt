@@ -24,7 +24,8 @@ from sqlalchemy import URL, Engine, create_engine, pool, text
 
 from jhunt.platform.runtime import queue
 from jhunt.platform.runtime.registry import Registry
-from jhunt.platform.runtime.worker import enqueue_resume, process_run, run_worker
+from jhunt.platform.runtime.threads import enqueue_resume, enqueue_start
+from jhunt.platform.runtime.worker import process_run, run_worker
 
 
 class Crash(BaseException):
@@ -232,11 +233,11 @@ def test_pending_steps_continue_from_the_last_checkpoint(db: tuple[Engine, str])
 
 def test_waiting_at_an_interrupt_resumes_with_the_payload(db: tuple[Engine, str]) -> None:
     engine, info = db
-    start = queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
+    start = enqueue_start(engine, REGISTRY, "t1", "ask", {"trail": []})
     work_once(engine, info)
     assert status(engine, start) == ("interrupted", 1, None)
 
-    resume = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
+    resume = enqueue_resume(engine, info, REGISTRY, "t1", "yes")
     work_once(engine, info)
 
     assert status(engine, resume) == ("succeeded", 1, None)
@@ -248,9 +249,9 @@ def test_crash_inside_the_resumed_step_resumes_with_the_payload_again(
     db: tuple[Engine, str],
 ) -> None:
     engine, info = db
-    queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
+    enqueue_start(engine, REGISTRY, "t1", "ask", {"trail": []})
     work_once(engine, info)
-    resume = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
+    resume = enqueue_resume(engine, info, REGISTRY, "t1", "yes")
 
     crash_next.add("ask")  # dies after interrupt() returned, before the step was saved
     crash_once(engine, info)
@@ -266,9 +267,9 @@ def test_crash_in_the_step_after_a_resume_continues_without_resending(
     db: tuple[Engine, str],
 ) -> None:
     engine, info = db
-    queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
+    enqueue_start(engine, REGISTRY, "t1", "ask", {"trail": []})
     work_once(engine, info)
-    resume = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
+    resume = enqueue_resume(engine, info, REGISTRY, "t1", "yes")
 
     crash_next.add("after")  # the resume was applied and saved; the next step dies
     crash_once(engine, info)
@@ -288,11 +289,11 @@ def test_crash_in_the_step_after_a_resume_continues_without_resending(
 
 def test_enqueue_resume_records_the_interrupt_it_answers(db: tuple[Engine, str]) -> None:
     engine, info = db
-    queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
+    enqueue_start(engine, REGISTRY, "t1", "ask", {"trail": []})
     work_once(engine, info)
     pending = state(info, build_ask, "t1").interrupts[0]
 
-    run_id = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
+    run_id = enqueue_resume(engine, info, REGISTRY, "t1", "yes")
 
     with engine.connect() as conn:
         payload = conn.execute(
@@ -303,19 +304,19 @@ def test_enqueue_resume_records_the_interrupt_it_answers(db: tuple[Engine, str])
 
 def test_enqueue_resume_refuses_a_thread_that_is_not_waiting(db: tuple[Engine, str]) -> None:
     engine, info = db
-    queue.enqueue(engine, "t1", "linear", 1, "start", {"trail": []})
+    enqueue_start(engine, REGISTRY, "t1", "linear", {"trail": []})
     work_once(engine, info)  # runs to the end, never waits
     with pytest.raises(ValueError, match="not waiting at an interrupt"):
-        enqueue_resume(engine, info, REGISTRY, "t1", "linear", 1, "yes")
+        enqueue_resume(engine, info, REGISTRY, "t1", "yes")
 
 
 def test_resume_applied_then_crash_before_close_leaves_the_next_interrupt_unanswered(
     db: tuple[Engine, str],
 ) -> None:
     engine, info = db
-    queue.enqueue(engine, "t1", "twice", 1, "start", {"trail": []})
+    enqueue_start(engine, REGISTRY, "t1", "twice", {"trail": []})
     work_once(engine, info)  # waits at the first interrupt
-    first = enqueue_resume(engine, info, REGISTRY, "t1", "twice", 1, "first answer")
+    first = enqueue_resume(engine, info, REGISTRY, "t1", "first answer")
 
     # Attempt 1 answers the first interrupt, the graph stops at the second
     # one, and the worker dies before closing the run.
@@ -335,7 +336,7 @@ def test_resume_applied_then_crash_before_close_leaves_the_next_interrupt_unansw
     assert executed.count("ask2") == 1  # not re-run by the retry
 
     # The second interrupt still takes its own answer.
-    reply = enqueue_resume(engine, info, REGISTRY, "t1", "twice", 1, "second answer")
+    reply = enqueue_resume(engine, info, REGISTRY, "t1", "second answer")
     work_once(engine, info)
     assert status(engine, reply) == ("succeeded", 1, None)
     assert state(info, build_twice, "t1").values["answer2"] == "second answer"

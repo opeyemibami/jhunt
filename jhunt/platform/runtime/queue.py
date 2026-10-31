@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import IntegrityError
 
 # A lease lasts 30 s; the worker extends it every 10 s while it works (PR 1.3).
@@ -43,22 +43,33 @@ class Run:
 def enqueue(
     engine: Engine, thread_id: str, workflow: str, version: int, kind: str, payload: Any
 ) -> int:
-    """Add a run to the queue. Returns its id."""
+    """Add a run to the queue. Returns its id.
+
+    Workflows and the API use jhunt.platform.runtime.threads instead, which
+    pins the version; this is the low-level insert underneath it.
+    """
     with engine.begin() as conn:
-        run_id: int = conn.execute(
-            text(
-                "INSERT INTO runs (thread_id, workflow, version, kind, payload)"
-                " VALUES (:thread_id, :workflow, :version, :kind, CAST(:payload AS jsonb))"
-                " RETURNING id"
-            ),
-            {
-                "thread_id": thread_id,
-                "workflow": workflow,
-                "version": version,
-                "kind": kind,
-                "payload": json.dumps(payload),
-            },
-        ).scalar_one()
+        return insert_run(conn, thread_id, workflow, version, kind, payload)
+
+
+def insert_run(
+    conn: Connection, thread_id: str, workflow: str, version: int, kind: str, payload: Any
+) -> int:
+    """enqueue(), inside a transaction the caller already holds."""
+    run_id: int = conn.execute(
+        text(
+            "INSERT INTO runs (thread_id, workflow, version, kind, payload)"
+            " VALUES (:thread_id, :workflow, :version, :kind, CAST(:payload AS jsonb))"
+            " RETURNING id"
+        ),
+        {
+            "thread_id": thread_id,
+            "workflow": workflow,
+            "version": version,
+            "kind": kind,
+            "payload": json.dumps(payload),
+        },
+    ).scalar_one()
     return run_id
 
 
