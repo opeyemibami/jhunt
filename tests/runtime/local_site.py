@@ -10,10 +10,14 @@ import pytest
 
 @dataclass
 class Site:
-    """Pages served at http://127.0.0.1:<port>/<path>: path -> (status, body)."""
+    """Pages served at http://127.0.0.1:<port>/<path>: path -> (status, body).
+
+    redirects maps a path to another path, answered with a 302.
+    """
 
     base: str = ""
     pages: dict[str, tuple[int, bytes]] = field(default_factory=dict)
+    redirects: dict[str, str] = field(default_factory=dict)
     hits: list[str] = field(default_factory=list)
 
     def url(self, path: str) -> str:
@@ -28,6 +32,12 @@ def site() -> Iterator[Site]:
         def do_GET(self) -> None:  # the name http.server calls
             path = self.path.lstrip("/")
             served.hits.append(path)
+            if path in served.redirects:
+                self.send_response(302)
+                self.send_header("Location", f"{served.base}/{served.redirects[path]}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             status, body = served.pages.get(path, (404, b"not found"))
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
