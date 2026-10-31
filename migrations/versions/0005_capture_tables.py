@@ -1,9 +1,10 @@
 """capture tables: jd_snapshots, applications, events
 
 Once recorded, a snapshot or an event never changes (AGENTS.md hard rule 8):
-triggers refuse UPDATE, DELETE and TRUNCATE on both, for every database role
-the app uses. An application changes only its stage, outcome, notes and
-closing time; its thread ids are set once (design.md, data model; ADR 0007).
+triggers refuse UPDATE, DELETE and TRUNCATE on both. An application is never
+deleted, and changes only its stage, outcome, notes and closing time; its
+thread ids are set once (design.md, data model; ADR 0007). The triggers bind
+every role that doesn't own the tables; see ADR 0007 for the current limit.
 
 Revision ID: 0005
 Revises: 0004
@@ -21,14 +22,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # One function for every append-only table; tool_calls, submissions and
-    # labels get the same trigger when they are created.
+    # One function for every refused change: on the append-only tables
+    # (tool_calls, submissions and labels get it too when they are created)
+    # and for deleting applications.
     op.execute(
         """
         CREATE FUNCTION forbid_change() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             -- restrict_violation (SQLSTATE 23001): the app sees an integrity error.
-            RAISE EXCEPTION '% on % refused: rows are append-only (AGENTS.md hard rule 8)',
+            RAISE EXCEPTION '% on % refused: these rows are kept as recorded (ADR 0007)',
                 TG_OP, TG_TABLE_NAME USING ERRCODE = 'restrict_violation';
         END
         $$
@@ -108,6 +110,16 @@ def upgrade() -> None:
     op.execute(
         "CREATE TRIGGER applications_guard BEFORE UPDATE ON applications"
         " FOR EACH ROW EXECUTE FUNCTION applications_guard()"
+    )
+    # Never deleted either. Without these, an application with no events yet
+    # (so no foreign key in the way) could be deleted by any code.
+    op.execute(
+        "CREATE TRIGGER applications_no_delete BEFORE DELETE ON applications"
+        " FOR EACH ROW EXECUTE FUNCTION forbid_change()"
+    )
+    op.execute(
+        "CREATE TRIGGER applications_no_truncate BEFORE TRUNCATE ON applications"
+        " FOR EACH STATEMENT EXECUTE FUNCTION forbid_change()"
     )
 
     op.execute(

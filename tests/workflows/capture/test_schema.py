@@ -62,7 +62,10 @@ def event(conn: Connection, application_id: int) -> int:
 def test_snapshots_never_change(engine: Engine, statement: str) -> None:
     with engine.begin() as conn:
         sid = snapshot(conn)
-    with pytest.raises(REFUSED, match="append-only"), engine.begin() as conn:
+    with (
+        pytest.raises(REFUSED, match="refused: these rows are kept as recorded"),
+        engine.begin() as conn,
+    ):
         conn.execute(text(statement), {"id": sid})
 
 
@@ -77,7 +80,10 @@ def test_snapshots_never_change(engine: Engine, statement: str) -> None:
 def test_events_never_change(engine: Engine, statement: str) -> None:
     with engine.begin() as conn:
         eid = event(conn, application(conn, snapshot(conn)))
-    with pytest.raises(REFUSED, match="append-only"), engine.begin() as conn:
+    with (
+        pytest.raises(REFUSED, match="refused: these rows are kept as recorded"),
+        engine.begin() as conn,
+    ):
         conn.execute(text(statement), {"id": eid})
 
 
@@ -113,6 +119,23 @@ def test_application_fields_that_never_change(engine: Engine, assignment: str) -
         aid = application(conn, snapshot(conn))
     with pytest.raises(REFUSED, match="cannot change"), engine.begin() as conn:
         conn.execute(text(f"UPDATE applications SET {assignment} WHERE id = :id"), {"id": aid})
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "DELETE FROM applications WHERE id = :id",
+        # Plain TRUNCATE is already refused by the events foreign key; CASCADE
+        # would get past that, so the applications trigger must refuse it.
+        "TRUNCATE applications CASCADE",
+    ],
+)
+def test_applications_are_never_deleted(engine: Engine, statement: str) -> None:
+    # No events yet, so no foreign key would stop a delete: only the trigger can.
+    with engine.begin() as conn:
+        aid = application(conn, snapshot(conn))
+    with pytest.raises(REFUSED, match="on applications refused"), engine.begin() as conn:
+        conn.execute(text(statement), {"id": aid})
 
 
 def test_thread_ids_are_set_once(engine: Engine) -> None:

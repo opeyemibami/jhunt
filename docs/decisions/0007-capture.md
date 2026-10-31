@@ -25,10 +25,11 @@ design.md lists the fields but not how a snapshot's parts are stored, how "never
 - **`events`**
   - `application_id`, `type`, `payload` (jsonb), `actor` (`you`, `workflow` or `email`) and `at`.
 
-**Enforced in the database, by triggers**, so no code path can get round them:
+**Enforced in the database, by triggers**, so application code can't get round them (but see "Limit" below):
 
-- **`jd_snapshots` and `events` are append-only.** UPDATE, DELETE and TRUNCATE all raise `restrict_violation` (SQLSTATE 23001), which reaches the app as an `IntegrityError` with "refused: rows are append-only". One function, `forbid_change()`, serves every append-only table. `tool_calls` (PR 2.4), `submissions` and `labels` get the same trigger when they're created.
-- **`applications` changes only where it stands.**
+- **`jd_snapshots` and `events` are append-only.** UPDATE, DELETE and TRUNCATE all raise `restrict_violation` (SQLSTATE 23001), which reaches the app as an `IntegrityError` with "refused: these rows are kept as recorded". One function, `forbid_change()`, serves every refused change. `tool_calls` (PR 2.4), `submissions` and `labels` get the same trigger when they're created.
+- **`applications` is never deleted, and changes only where it stands.**
+  - DELETE and TRUNCATE are refused by `forbid_change()`. Without these, an application with no events yet, so no foreign key in the way, could be deleted by any code.
   - Stage, outcome, notes and closing time may change.
   - `id`, `dedupe_key`, `snapshot_id`, `company`, `role` and `opened_at` never change.
   - Thread ids may be set once, from null, and never move after that.
@@ -47,6 +48,9 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
 
 ## Consequences
 
-- **Deleting an application's rows** (a privacy request, or the owner tidying up) is refused by the triggers for every role the app uses. When that's needed, it will be an owner command that disables the triggers inside one transaction, for one application, and logs what it removed. Until then nothing can delete these rows.
+- **Limit: the triggers don't bind the role the app uses today.** The app connects as `POSTGRES_USER`, a superuser that owns these tables. Such a role can switch the triggers off (`ALTER TABLE ... DISABLE TRIGGER`, or `SET session_replication_role = replica`). So for now the triggers stop mistakes in application code, not a deliberate bypass.
+  - The fix is two roles, before migration (G1; see the backlog). `jhunt_owner` runs migrations and owns the tables. `jhunt_app` is used at runtime: it has SELECT and INSERT on the append-only tables, and UPDATE on `applications` for the changeable columns only, with no ownership and no superuser.
+  - Until that split is done, this ADR's "never" holds for code paths, not for every role.
+- **Deleting an application's rows** (a privacy request, or the owner tidying up) is refused by the triggers. When that's needed, it will be an owner command that runs as `jhunt_owner` and disables the triggers inside one transaction, for one application, logging what it removed. Until then nothing in the code can delete these rows.
 - **The dedupe key lives in the Capture package.** Scout (week 3) needs the same key for postings, and workflows may not import each other. When Scout lands, the module moves to a shared place, to be agreed then; the rules don't change.
 - **The ADR for gateway v0 (PR 2.4) is 0008.** The week 2 plan called it 0007. This ADR, 0007, takes the Capture snapshot rules in PR 2.5, including the adopt-existing-object rule.
