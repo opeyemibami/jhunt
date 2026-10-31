@@ -5,6 +5,7 @@ description = "Job-search assistant on a reusable AI workflow platform"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic==1.20.0",
+    "google-cloud-storage==3.17.1",
     "httpx==0.28.1",
     "langgraph==1.2.15",
     "langgraph-checkpoint==4.3.0",
@@ -16,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 jhunt-worker = "jhunt.app.worker:main"
+jhunt-records-delete = "jhunt.app.records_delete:main"
 jhunt-api = "jhunt.api.main:main"
 
 [build-system]
@@ -57,15 +59,24 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 python_version = "3.12"
 strict = true
 
+[[tool.mypy.overrides]]
+# google-cloud-storage ships no type information. Only jhunt.platform.artifacts
+# imports it (AGENTS.md), so the untyped surface stays in one package.
+module = ["google.cloud.*", "google.api_core.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "live: calls a real model provider; runs only with RUN_LIVE_MODEL_TESTS=1",
+    "owner: needs the owner's gcloud login; runs only with RUN_OWNER_TESTS=1",
 ]
 
 [tool.importlinter]
 root_package = "jhunt"
+# Needed so a contract can name an external package (google, for the storage SDK).
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "jhunt.platform never imports jhunt.workflows or jhunt.api"
@@ -92,3 +103,26 @@ modules = [
     "jhunt.workflows.prep",
     "jhunt.workflows.funnel",
 ]
+
+[[tool.importlinter.contracts]]
+# import-linter can only name an external package by its top level, so this
+# forbids all of "google" (the storage SDK and its auth libraries) outside
+# artifacts; nothing else in jhunt needs them.
+name = "only jhunt.platform.artifacts touches the storage SDK"
+type = "forbidden"
+source_modules = [
+    "jhunt.app",
+    "jhunt.api",
+    "jhunt.workflows",
+    "jhunt.platform.config",
+    "jhunt.platform.runtime",
+    "jhunt.platform.timers",
+    "jhunt.platform.gateway",
+    "jhunt.platform.memory",
+    "jhunt.platform.models",
+    "jhunt.platform.events",
+    "jhunt.platform.observability",
+]
+forbidden_modules = ["google"]
+# Direct imports only: using storage *through* jhunt.platform.artifacts is the point.
+allow_indirect_imports = true
