@@ -13,6 +13,10 @@ Deferred work that has a target week. One line per item, with where it came from
 
 - Workspace: a resume whose interrupt was already answered closes as `interrupted` without applying its value (ADR 0005). Surface it to the user as "answer not applied: this question was already answered", and show which answer won. (PR 2.1 review)
 
+## Before migration (G1)
+
+- Database roles: the app connects as `POSTGRES_USER`, a superuser that owns the tables, so it could disable the append-only triggers (`ALTER TABLE ... DISABLE TRIGGER`, or `session_replication_role`). Split into two roles. `jhunt_owner` runs migrations and owns the tables. `jhunt_app` is used at runtime, with SELECT and INSERT on the append-only tables, plus UPDATE on `applications` for the changeable columns only (stage, outcome, notes, closed_at, thread_id, chat_thread_id), and no ownership or superuser. The owner delete command runs as `jhunt_owner`. Then remove the limit from ADR 0007. (PR 2.3 review)
+
 ## Week 16
 
 - Confirm with a real cached call whether OpenAI's input_tokens includes cache_write_tokens (ADR 0003 assumes yes). (PR 4b review)
