@@ -23,9 +23,10 @@ requires = ["uv_build==0.13.1"]
 build-backend = "uv_build"
 
 [tool.uv]
-# The one place uv is pinned. Local uv refuses to run at another version, and
-# CI's setup-uv installs exactly this one (version-file in ci.yml).
-required-version = "==0.9.11"
+# The uv CLI pin. Local uv refuses to run at another version, and CI's setup-uv
+# installs exactly this one (version-file in ci.yml). Keep uv_build in
+# [build-system] at the same version so the CLI and the build backend match.
+required-version = "==0.13.1"
 
 [tool.uv.build-backend]
 # The package lives at the repo root (jhunt/), not under src/.
