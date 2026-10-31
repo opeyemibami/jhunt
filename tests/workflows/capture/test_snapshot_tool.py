@@ -11,7 +11,7 @@ from google.cloud import storage
 
 from jhunt.platform.artifacts import RecordStore
 from jhunt.workflows.capture.snapshot import FetchFailed, snapshot_posting_tool
-from tests.workflows.capture.conftest import Site
+from tests.runtime.local_site import Site
 
 KEY = "a" * 64  # a dedupe key: 64 hex characters
 # A real job description has well over 500 characters of text (the guard
@@ -46,7 +46,7 @@ def test_stores_html_and_text_and_returns_only_references(
     assert text == f"Senior Engineer\nDublin\n{ABOUT.strip()}".encode()
 
 
-def test_a_second_fetch_with_different_html_keeps_the_first_snapshot(
+def test_a_retry_keeps_the_first_snapshot_without_fetching_again(
     site: Site, store: RecordStore, http: httpx.Client, record_prefix: str
 ) -> None:
     tool = snapshot_posting_tool(store, http, prefix=record_prefix)
@@ -59,7 +59,7 @@ def test_a_second_fetch_with_different_html_keeps_the_first_snapshot(
 
     assert second == first
     assert second["html"]["sha256"] == hashlib.sha256(PAGE).hexdigest()
-    assert site.hits == ["job/1", "job/1"]  # it did fetch again, and kept the first
+    assert site.hits == ["job/1"]  # the page.html already there is adopted: no second fetch
 
 
 def test_text_comes_from_the_stored_html_not_a_newer_fetch(
@@ -77,6 +77,23 @@ def test_text_comes_from_the_stored_html_not_a_newer_fetch(
         f"{record_prefix}{KEY}/page.txt", result["text"]["generation"], result["text"]["sha256"]
     )
     assert text == f"Senior Engineer\nDublin\n{ABOUT.strip()}".encode()  # the kept HTML
+    assert site.hits == []  # adopted without fetching
+
+
+def test_an_existing_snapshot_is_adopted_without_fetching_even_if_the_page_is_now_a_shell(
+    site: Site, store: RecordStore, http: httpx.Client, record_prefix: str
+) -> None:
+    # ADR 0007's edge case: an earlier attempt kept a good page, then crashed
+    # before the gateway recorded the result; the page now fetches as a shell.
+    kept = store.put(f"{record_prefix}{KEY}/page.html", PAGE, "text/html")
+    site.pages["job/1"] = (200, b'<html><body><div id="root">Loading...</div></body></html>')
+
+    result = snapshot_posting_tool(store, http, prefix=record_prefix).run(
+        {"url": site.url("job/1"), "dedupe_key": KEY}
+    )
+
+    assert result["html"] == {"uri": kept.uri, "generation": kept.generation, "sha256": kept.sha256}
+    assert site.hits == []  # no HTTP request at all
 
 
 @pytest.mark.parametrize("status", [404, 500])

@@ -84,12 +84,22 @@ class RecordStore:
         try:
             return self.put(key, data, content_type), data
         except RecordExists:
-            return self._adopt(key)
+            adopted = self.existing(key)
+            if adopted is None:  # it existed a moment ago; records are never deleted by the app
+                raise RuntimeError(
+                    f"gs://{self._bucket.name}/{key} exists but could not be read"
+                ) from None
+            return adopted
 
-    def _adopt(self, key: str) -> tuple[StoredRecord, bytes]:
-        blob = self._bucket.get_blob(key)  # the live generation
+    def existing(self, key: str) -> tuple[StoredRecord, bytes] | None:
+        """The live record under this key and its bytes, or None if there is none.
+
+        Same rule as adopting: the generation comes from storage and the
+        sha256 from the downloaded bytes, never from metadata.
+        """
+        blob = self._bucket.get_blob(key)  # the live generation, or None
         if blob is None or blob.generation is None:
-            raise RuntimeError(f"gs://{self._bucket.name}/{key} exists but could not be read")
+            return None
         data: bytes = self._bucket.blob(key, generation=blob.generation).download_as_bytes()
         record = StoredRecord(
             uri=f"gs://{self._bucket.name}/{key}",

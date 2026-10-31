@@ -44,13 +44,19 @@ def snapshot_posting_tool(
         # The key becomes part of the object names: accept only a real sha256.
         if not _DEDUPE_KEY.fullmatch(key):
             raise ValueError(f"not a dedupe_key: {key!r}")
-        html = _fetch(http, url, max_bytes)
-        chars = len(html_to_text(html))
-        if chars < MIN_TEXT_CHARS:
-            raise FetchFailed(f"page looks JavaScript-rendered: {chars} chars of text")
-
         folder = f"{prefix}{key}/"
-        html_record, kept_html = store.put_or_adopt(f"{folder}page.html", html, "text/html")
+        kept = store.existing(f"{folder}page.html")
+        if kept is not None:
+            # An earlier attempt kept this page (and crashed before the gateway
+            # recorded the result): adopt it without fetching. A newer fetch
+            # might be different, or a JavaScript shell (ADR 0007).
+            html_record, kept_html = kept
+        else:
+            html = _fetch(http, url, max_bytes)
+            chars = len(html_to_text(html))
+            if chars < MIN_TEXT_CHARS:
+                raise FetchFailed(f"page looks JavaScript-rendered: {chars} chars of text")
+            html_record, kept_html = store.put_or_adopt(f"{folder}page.html", html, "text/html")
         # The text comes from the HTML that was kept, which may be an earlier
         # fetch than this one, so the two records always describe one page.
         text = html_to_text(kept_html).encode()
