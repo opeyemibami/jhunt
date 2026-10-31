@@ -11,6 +11,7 @@ from alembic.config import Config
 from sqlalchemy import URL, create_engine, pool, text
 
 from jhunt.platform.config import Settings, get_settings
+from tests.runtime.lease_watch import LeaseWatch
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -77,3 +78,14 @@ def migrated_db_url(scratch_db_url: URL) -> URL:
     cfg.attributes["database_url"] = scratch_db_url
     command.upgrade(cfg, "head")
     return scratch_db_url
+
+
+@pytest.fixture
+def lease_watch() -> Iterator[LeaseWatch]:
+    """The lease-lost handler for workers run inside the test process.
+
+    Fails the test at teardown if any lease was lost, naming the run and why.
+    """
+    watch = LeaseWatch()
+    yield watch
+    watch.check()

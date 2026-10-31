@@ -9,6 +9,7 @@ The real-process versions are in tests/guarantees/.
 import operator
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from typing import Annotated, Any, TypedDict
 
@@ -26,6 +27,7 @@ from jhunt.platform.runtime import queue
 from jhunt.platform.runtime.registry import Registry
 from jhunt.platform.runtime.threads import enqueue_resume, enqueue_start
 from jhunt.platform.runtime.worker import process_run, run_worker
+from tests.runtime.lease_watch import LeaseWatch
 
 
 class Crash(BaseException):
@@ -137,8 +139,14 @@ REGISTRY.register("twice", 1, build_twice)
 REGISTRY.register("spied", 1, build_spied)
 
 
+# The lease-lost handler for this test's in-process workers (see lease_watch).
+watch: LeaseWatch
+
+
 @pytest.fixture(autouse=True)
-def reset() -> None:
+def reset(lease_watch: LeaseWatch) -> None:
+    global watch
+    watch = lease_watch
     executed.clear()
     crash_next.clear()
     invocations.clear()
@@ -155,7 +163,7 @@ def db(migrated_db_url: URL) -> Iterator[tuple[Engine, str]]:
 def work_once(engine: Engine, info: str, **kwargs: float) -> queue.Run:
     run = queue.claim(engine)
     assert run is not None, "nothing to claim"
-    process_run(engine, info, REGISTRY, run, **kwargs)
+    process_run(engine, info, REGISTRY, run, on_lease_lost=watch, **kwargs)
     return run
 
 
@@ -163,7 +171,7 @@ def crash_once(engine: Engine, info: str) -> queue.Run:
     run = queue.claim(engine)
     assert run is not None
     with pytest.raises(Crash):
-        process_run(engine, info, REGISTRY, run)
+        process_run(engine, info, REGISTRY, run, on_lease_lost=watch)
     # The worker "died": its lease runs out, so another worker may retry.
     expire(engine, run.id)
     return run
@@ -178,7 +186,7 @@ def crash_before_close(engine: Engine, info: str) -> queue.Run:
         raise Crash("before close")
 
     with pytest.raises(Crash):
-        process_run(engine, info, REGISTRY, run, before_close=die)
+        process_run(engine, info, REGISTRY, run, before_close=die, on_lease_lost=watch)
     expire(engine, run.id)
     return run
 
@@ -399,7 +407,7 @@ def test_heartbeat_keeps_the_lease_during_a_long_step(db: tuple[Engine, str]) ->
     worker = threading.Thread(
         target=process_run,
         args=(engine, info, REGISTRY, run),
-        kwargs={"lease_seconds": 1, "heartbeat_seconds": 0.3},
+        kwargs={"lease_seconds": 1, "heartbeat_seconds": 0.3, "on_lease_lost": watch},
     )
     worker.start()
     time.sleep(1.5)  # longer than the lease: only the heartbeat keeps it alive
@@ -411,11 +419,11 @@ def test_heartbeat_keeps_the_lease_during_a_long_step(db: tuple[Engine, str]) ->
 def test_loop_drains_the_queue_until_stopped(db: tuple[Engine, str]) -> None:
     engine, info = db
     ids = [queue.enqueue(engine, f"t{i}", "linear", 1, "start", {"trail": []}) for i in range(3)]
-    stop = threading.Event()
+    stop = watch.stop  # a lost lease also stops the loop
     loop = threading.Thread(
         target=run_worker,
         args=(engine, info, REGISTRY),
-        kwargs={"idle_seconds": 0.05, "stop": stop},
+        kwargs={"idle_seconds": 0.05, "stop": stop, "on_lease_lost": watch},
     )
     loop.start()
     deadline = time.monotonic() + 30
@@ -434,3 +442,49 @@ def test_registry_refuses_to_replace_a_version() -> None:
         registry.register("w", 1, build_ask)
     assert registry.get("w", 1) is build_linear
     assert registry.get("w", 2) is None
+
+
+# --- the lease-lost handler -------------------------------------------------
+
+
+def test_lost_lease_calls_the_handler_and_the_heartbeat_stops(db: tuple[Engine, str]) -> None:
+    engine, info = db
+    run_id = queue.enqueue(engine, "t1", "slow", 1, "start", {})
+    run = queue.claim(engine, lease_seconds=1)
+    assert run is not None
+    lost: list[tuple[int, str]] = []
+    worker = threading.Thread(
+        target=process_run,
+        args=(engine, info, REGISTRY, run),
+        kwargs={
+            "lease_seconds": 1,
+            "heartbeat_seconds": 0.3,
+            "on_lease_lost": lambda r, reason: lost.append((r.id, reason)),
+        },
+    )
+    worker.start()
+    # Another worker takes the run over while the slow step is still running.
+    expire(engine, run_id)
+    taken = queue.claim(engine, lease_seconds=30)
+    assert taken is not None
+    worker.join()
+
+    assert lost == [(run_id, "the run is no longer ours: another worker took it over")]
+    # The fenced close did nothing: the run still belongs to the new owner.
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT status, lease_owner FROM runs WHERE id = :id"), {"id": run_id}
+        ).one()
+    assert (row.status, row.lease_owner) == ("running", taken.owner)
+
+
+def test_lease_watch_fails_the_test_with_the_run_and_reason() -> None:
+    from tests.runtime.lease_watch import LeaseWatch
+
+    watch = LeaseWatch()
+    watch.check()  # nothing lost: passes
+    run = queue.Run(7, "t", "w", 1, "start", {}, 1, uuid.uuid4())
+    watch(run, "extend failed: OperationalError: connection lost")
+    assert watch.stop.is_set()
+    with pytest.raises(pytest.fail.Exception, match="run 7: extend failed: OperationalError"):
+        watch.check()
