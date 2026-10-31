@@ -55,6 +55,19 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
 
 **`snapshot_posting` is one tool, not two** (ADR 0008: arguments small and deterministic, results references). It fetches and stores in one call, and returns only `{html, text}`, each with its `uri`, `generation` and `sha256`.
 
+- **Job-board links go to the board's API, never the page** (owner bug report, 2026-10-31).
+  - **The bug.** `jhunt-capture` on a non-existent Greenhouse job (`jobs/4567890`) succeeded: the missing job redirected to the board's list, which returned 200 with enough text to pass the 500-character guard. Any expired job link would have been captured as the wrong page.
+  - **The rule** (`jhunt/workflows/capture/boards.py`). For links on `job-boards.greenhouse.io` or `boards.greenhouse.io` (`/<board>/jobs/<id>`), `jobs.ashbyhq.com` (`/<org>/<uuid>`) and `jobs.lever.co` (`/<site>/<uuid>`), the tool parses the board and job id and asks the board's public API:
+
+    | Board | API | What is snapshotted |
+    |---|---|---|
+    | Greenhouse | `boards-api.greenhouse.io/v1/boards/{board}/jobs/{id}?content=true` | `content`, which the API entity-escapes, so it's unescaped |
+    | Ashby | the posting API's board list, searched for the job id | `descriptionHtml` |
+    | Lever | `api.lever.co/v0/postings/{site}/{id}` | `description`, then each list as `<h3>` plus `<ul>`, then `additional` |
+
+  - A 404, a job missing from the board's list, or an empty description raises `FetchFailed("job not found")`. The 500-character guard doesn't apply: the API answers the question directly.
+  - EU-hosted Greenhouse boards (`job-boards.eu.greenhouse.io`) have no documented API host (docs/sources.md), so they take the generic path below.
+- **Any other link: refuse a redirect that changes the path.** If the final URL's path differs from the requested one (ignoring a trailing slash), the tool raises `FetchFailed("redirected from <a> to <b>; the job may have closed")`. A change of scheme or host on the same path, such as http to https or `www.`, is fine.
 - **Fetch.** One GET with redirects followed and a 20 s timeout. Anything but HTTP 200 raises `FetchFailed`, as does a body over 5 MB. Nothing is stored, and the gateway records nothing, so the next attempt fetches again.
 - **Refuse JavaScript-rendered pages** (owner review, PR 2.5). Many job pages, Ashby especially, build their content with JavaScript, so the fetched HTML is a near-empty shell. If the fetched page has under 500 characters of extracted text, the tool raises `FetchFailed("page looks JavaScript-rendered: <n> chars of text")` before storing anything.
   - A Scout posting avoids the problem: its snapshot comes from the board API's description (planned for Scout).

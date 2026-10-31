@@ -16,6 +16,7 @@ import httpx
 
 from jhunt.platform.artifacts import RecordStore, StoredRecord
 from jhunt.platform.gateway import Tool
+from jhunt.workflows.capture.boards import PUBLIC_APIS, JobNotFound, board_job, job_description
 from jhunt.workflows.capture.text import html_to_text
 
 ACTION = "snapshot_job_description"
@@ -38,6 +39,7 @@ def snapshot_posting_tool(
     *,
     prefix: str = "snapshots/",
     max_bytes: int = MAX_BYTES,
+    apis: dict[str, str] = PUBLIC_APIS,
 ) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         url, key = args["url"], args["dedupe_key"]
@@ -52,10 +54,7 @@ def snapshot_posting_tool(
             # might be different, or a JavaScript shell (ADR 0007).
             html_record, kept_html = kept
         else:
-            html = _fetch(http, url, max_bytes)
-            chars = len(html_to_text(html))
-            if chars < MIN_TEXT_CHARS:
-                raise FetchFailed(f"page looks JavaScript-rendered: {chars} chars of text")
+            html = _job_html(http, url, max_bytes, apis)
             html_record, kept_html = store.put_or_adopt(f"{folder}page.html", html, "text/html")
         # The text comes from the HTML that was kept, which may be an earlier
         # fetch than this one, so the two records always describe one page.
@@ -66,10 +65,33 @@ def snapshot_posting_tool(
     return Tool("snapshot_posting", ACTION, run)
 
 
+def _job_html(http: httpx.Client, url: str, max_bytes: int, apis: dict[str, str]) -> bytes:
+    """The HTML to keep for a job link. Raises FetchFailed with the reason."""
+    job = board_job(url)
+    if job is not None:
+        # Greenhouse, Ashby and Lever: ask the board's API, never the page
+        # (a closed job's page redirects to the board's list; boards.py).
+        try:
+            return job_description(http, job, apis)
+        except JobNotFound:
+            raise FetchFailed("job not found") from None
+    html = _fetch(http, url, max_bytes)
+    chars = len(html_to_text(html))
+    if chars < MIN_TEXT_CHARS:
+        raise FetchFailed(f"page looks JavaScript-rendered: {chars} chars of text")
+    return html
+
+
 def _fetch(http: httpx.Client, url: str, max_bytes: int) -> bytes:
     with http.stream("GET", url, follow_redirects=True) as response:
         if response.status_code != 200:
             raise FetchFailed(f"GET {url}: HTTP {response.status_code}")
+        # A job link that lands somewhere else (the careers page, a search)
+        # usually means the job closed. Same path, other scheme or host (http
+        # to https, www.) or a trailing slash is fine.
+        asked, landed = httpx.URL(url), response.url
+        if asked.path.rstrip("/") != landed.path.rstrip("/"):
+            raise FetchFailed(f"redirected from {url} to {landed}; the job may have closed")
         body = bytearray()
         for chunk in response.iter_bytes():
             body.extend(chunk)
