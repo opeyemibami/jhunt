@@ -5,6 +5,11 @@ list, which returns 200 with plenty of text. Fetched as a page, it would be
 captured as the job. The board's API answers the real question instead: does
 this job exist, and what is its description? A missing job is a 404, or is
 absent from the board's list.
+
+Companies also embed these boards in their own careers page, with the job in
+the query (?gh_jid=<id>, ?ashby_jid=<uuid>). The page itself is only a shell
+or the company's job list; the board's name is somewhere in its HTML. So the
+page is fetched once to find the board, and the job comes from the API.
 """
 
 import html
@@ -12,7 +17,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
@@ -27,6 +32,18 @@ MAX_API_BYTES = 20_000_000
 
 _GREENHOUSE_HOSTS = {"job-boards.greenhouse.io", "boards.greenhouse.io"}
 _UUID = re.compile(r"[0-9a-fA-F-]{36}")
+
+# Where an embedding page names its board. Greenhouse: the embed script
+# (boards.greenhouse.io/embed/job_board/js?for=<board>) or any link to the
+# board. Ashby: the embed script or any link (jobs.ashbyhq.com/<org>/...).
+# EU-hosted Greenhouse boards are left out: their API host isn't documented.
+_EMBEDDED_BOARD = {
+    "greenhouse": [
+        re.compile(r"boards\.greenhouse\.io/embed/job_board(?:/js)?\?for=([A-Za-z0-9_-]+)"),
+        re.compile(r"(?<![.\w])(?:job-)?boards\.greenhouse\.io/(?!embed\b)([A-Za-z0-9_-]+)"),
+    ],
+    "ashby": [re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9._-]+)")],
+}
 
 
 class JobNotFound(Exception):
@@ -52,6 +69,26 @@ def board_job(url: str) -> BoardJob | None:
     if host == "jobs.lever.co" and len(path) >= 2 and _UUID.fullmatch(path[1]):
         return BoardJob("lever", path[0], path[1])
     return None
+
+
+def embedded_job_id(url: str) -> tuple[str, str] | None:
+    """(board kind, job id) for a careers-page link that names an embedded job."""
+    query = parse_qs(urlsplit(url.strip()).query)
+    greenhouse = query.get("gh_jid", [""])[0]
+    if greenhouse.isdigit():
+        return "greenhouse", greenhouse
+    ashby = query.get("ashby_jid", [""])[0]
+    if _UUID.fullmatch(ashby):
+        return "ashby", ashby
+    return None
+
+
+def embedded_board(kind: str, page: bytes) -> str | None:
+    """The board name an embedding page uses, or None if it names none, or
+    several different ones (then there's no telling which holds the job)."""
+    text = page.decode("utf-8", errors="replace")
+    found = {match for pattern in _EMBEDDED_BOARD[kind] for match in pattern.findall(text)}
+    return found.pop() if len(found) == 1 else None
 
 
 def job_description(http: httpx.Client, job: BoardJob, apis: dict[str, str]) -> bytes:

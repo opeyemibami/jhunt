@@ -67,6 +67,13 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
 
   - A 404, a job missing from the board's list, or an empty description raises `FetchFailed("job not found")`. The 500-character guard doesn't apply: the API answers the question directly.
   - EU-hosted Greenhouse boards (`job-boards.eu.greenhouse.io`) have no documented API host (docs/sources.md), so they take the generic path below.
+- **Boards embedded in a company's careers page** (owner bug report: `adaptionlabs.ai/careers?ashby_jid=…` was captured as the company's careers page).
+  - **Recognising them.** A link with `gh_jid=<numeric id>` or `ashby_jid=<uuid>` in its query names a job on an embedded board.
+  - **Finding the board.** The page is fetched once, only to find the board's name in its HTML:
+    - Greenhouse: the embed script `boards.greenhouse.io/embed/job_board/js?for=<board>`, or any `boards.greenhouse.io` or `job-boards.greenhouse.io` link;
+    - Ashby: any `jobs.ashbyhq.com/<org>` link, including its embed script.
+  - **Then the API.** The job is read from that board's API, as for a direct link. The page is never kept.
+  - **Refusals.** If the page names no board, or several different ones, the tool raises `FetchFailed("embedded board not found")`. It never falls back to the page. The page fetch still applies the redirect check.
 - **Any other link: refuse a redirect that changes the path.** If the final URL's path differs from the requested one (ignoring a trailing slash), the tool raises `FetchFailed("redirected from <a> to <b>; the job may have closed")`. A change of scheme or host on the same path, such as http to https or `www.`, is fine.
 - **Fetch.** One GET with redirects followed and a 20 s timeout. Anything but HTTP 200 raises `FetchFailed`, as does a body over 5 MB. Nothing is stored, and the gateway records nothing, so the next attempt fetches again.
 - **Refuse JavaScript-rendered pages** (owner review, PR 2.5). Many job pages, Ashby especially, build their content with JavaScript, so the fetched HTML is a near-empty shell. If the fetched page has under 500 characters of extracted text, the tool raises `FetchFailed("page looks JavaScript-rendered: <n> chars of text")` before storing anything.
