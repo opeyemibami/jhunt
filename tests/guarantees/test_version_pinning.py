@@ -30,6 +30,7 @@ from jhunt.platform.runtime.threads import (
     enqueue_start,
 )
 from jhunt.platform.runtime.worker import run_worker
+from tests.runtime.lease_watch import LeaseWatch
 
 WORKFLOW = "pinned"
 
@@ -74,13 +75,21 @@ def db(migrated_db_url: URL) -> Iterator[tuple[Engine, str]]:
     engine.dispose()
 
 
-def run_until(engine: Engine, info: str, registry: Registry, done: Callable[[], bool]) -> None:
-    """Run a worker loop in a thread until `done()` holds, then stop it."""
-    stop = threading.Event()
+def run_until(
+    engine: Engine, info: str, registry: Registry, done: Callable[[], bool], watch: LeaseWatch
+) -> None:
+    """Run a worker loop in a thread until `done()` holds, then stop it.
+
+    A lost lease is recorded by `watch` (failing the test at teardown) and
+    stops the loop. The stop event is the watch's, cleared here because one
+    test runs several loops in turn.
+    """
+    stop = watch.stop
+    stop.clear()
     loop = threading.Thread(
         target=run_worker,
         args=(engine, info, registry),
-        kwargs={"idle_seconds": 0.05, "stop": stop},
+        kwargs={"idle_seconds": 0.05, "stop": stop, "on_lease_lost": watch},
     )
     loop.start()
     deadline = time.monotonic() + 60
@@ -114,7 +123,9 @@ def waiting_at(
     return tuple(state.next)
 
 
-def test_open_threads_finish_on_the_version_they_started_on(db: tuple[Engine, str]) -> None:
+def test_open_threads_finish_on_the_version_they_started_on(
+    db: tuple[Engine, str], lease_watch: LeaseWatch
+) -> None:
     engine, info = db
     threads = [f"app-{i}" for i in range(10)]
 
@@ -122,7 +133,7 @@ def test_open_threads_finish_on_the_version_they_started_on(db: tuple[Engine, st
     v1_only.register(WORKFLOW, 1, build_v1)
     for thread_id in threads:
         enqueue_start(engine, v1_only, thread_id, WORKFLOW, {"trail": []})
-    run_until(engine, info, v1_only, lambda: statuses(engine) == {"interrupted": 10})
+    run_until(engine, info, v1_only, lambda: statuses(engine) == {"interrupted": 10}, lease_watch)
 
     # Deploy v2 next to v1.
     deployed = Registry()
@@ -132,7 +143,11 @@ def test_open_threads_finish_on_the_version_they_started_on(db: tuple[Engine, st
         enqueue_resume(engine, info, deployed, thread_id, "yes")
     enqueue_start(engine, deployed, "app-new", WORKFLOW, {"trail": []})
     run_until(
-        engine, info, deployed, lambda: statuses(engine) == {"interrupted": 11, "succeeded": 10}
+        engine,
+        info,
+        deployed,
+        lambda: statuses(engine) == {"interrupted": 11, "succeeded": 10},
+        lease_watch,
     )
 
     for thread_id in threads:
@@ -155,7 +170,9 @@ def test_open_threads_finish_on_the_version_they_started_on(db: tuple[Engine, st
     assert run_versions == {1}
 
 
-def test_worker_refuses_a_version_changed_in_place(db: tuple[Engine, str]) -> None:
+def test_worker_refuses_a_version_changed_in_place(
+    db: tuple[Engine, str], lease_watch: LeaseWatch
+) -> None:
     engine, info = db
     original = Registry()
     original.register(WORKFLOW, 1, build_v1)
@@ -171,7 +188,9 @@ def test_worker_refuses_a_version_changed_in_place(db: tuple[Engine, str]) -> No
     timer.start()
     try:
         with pytest.raises(VersionChanged, match="'pinned' version 1"):
-            run_worker(engine, info, changed, idle_seconds=0.05, stop=stop)
+            run_worker(
+                engine, info, changed, idle_seconds=0.05, stop=stop, on_lease_lost=lease_watch
+            )
     finally:
         timer.cancel()
 

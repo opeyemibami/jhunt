@@ -3,6 +3,11 @@
 While a run is in progress, a heartbeat thread extends the lease. If the lease
 can't be extended, another worker may already own the run, so this process
 exits on the spot (self-fencing) instead of carrying on beside it.
+
+What "exits on the spot" does is the lease-lost handler. In production it is
+always exit_now (os._exit). Tests that run the worker inside the pytest process
+pass a handler that records the loss instead, so a lost lease fails one named
+test rather than killing the test run (ADR 0005).
 """
 
 import logging
@@ -10,7 +15,7 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -31,6 +36,21 @@ HEARTBEAT_SECONDS = 10.0
 # Exit code when the lease is lost: 75 is EX_TEMPFAIL, "try again later".
 LOST_LEASE_EXIT = 75
 
+# Called with the run and the reason when the heartbeat can't keep the lease.
+LeaseLostHandler = Callable[[queue.Run, str], None]
+
+
+def exit_now(run: queue.Run, reason: str) -> NoReturn:
+    """The production lease-lost handler: end the process at once.
+
+    os._exit, not sys.exit: sys.exit in the heartbeat thread would end only
+    that thread, and the graph would carry on. os._exit stops the whole
+    process without finishing the step, writing a checkpoint or closing the
+    run. The new owner does all of that.
+    """
+    log.critical("run %s: lease lost (%s); exiting now (self-fencing)", run.id, reason)
+    os._exit(LOST_LEASE_EXIT)
+
 
 def run_worker(
     engine: Engine,
@@ -41,6 +61,7 @@ def run_worker(
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     idle_seconds: float = 1.0,
     stop: threading.Event | None = None,
+    on_lease_lost: LeaseLostHandler = exit_now,
 ) -> None:
     """Claim and process runs until `stop` is set. One run at a time.
 
@@ -61,6 +82,7 @@ def run_worker(
             run,
             lease_seconds=lease_seconds,
             heartbeat_seconds=heartbeat_seconds,
+            on_lease_lost=on_lease_lost,
         )
 
 
@@ -73,6 +95,7 @@ def process_run(
     lease_seconds: float = queue.LEASE_SECONDS,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     before_close: Callable[[queue.Run], None] | None = None,
+    on_lease_lost: LeaseLostHandler = exit_now,
 ) -> None:
     """Run one claimed run's graph and close the run.
 
@@ -91,7 +114,7 @@ def process_run(
     done = threading.Event()
     beat = threading.Thread(
         target=_heartbeat,
-        args=(engine, run, lease_seconds, heartbeat_seconds, done),
+        args=(engine, run, lease_seconds, heartbeat_seconds, done, on_lease_lost),
         daemon=True,
     )
     beat.start()
@@ -172,22 +195,25 @@ def plan_run(
 
 
 def _heartbeat(
-    engine: Engine, run: queue.Run, lease_seconds: float, interval: float, done: threading.Event
+    engine: Engine,
+    run: queue.Run,
+    lease_seconds: float,
+    interval: float,
+    done: threading.Event,
+    on_lease_lost: LeaseLostHandler,
 ) -> None:
     while not done.wait(interval):
         try:
             still_ours = queue.extend(engine, run, lease_seconds)
-        except Exception:
+            reason = "the run is no longer ours: another worker took it over"
+        except Exception as exc:
             # We can't prove we still hold the lease, so act as if we don't.
             log.exception("run %s: could not extend the lease", run.id)
             still_ours = False
+            reason = f"extend failed: {type(exc).__name__}: {exc}"
         if not still_ours:
-            log.critical("run %s: lease lost; exiting now (self-fencing)", run.id)
-            # os._exit, not sys.exit: sys.exit in this thread would end only
-            # this thread, and the graph would carry on. os._exit stops the
-            # whole process at once, without finishing the step, writing a
-            # checkpoint or closing the run. The new owner does all of that.
-            os._exit(LOST_LEASE_EXIT)
+            on_lease_lost(run, reason)  # in production this never returns
+            return  # the heartbeat stops either way
 
 
 def _stop(beat: threading.Thread, done: threading.Event) -> None:

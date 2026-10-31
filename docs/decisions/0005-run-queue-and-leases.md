@@ -107,6 +107,14 @@ The table doesn't rely on either: it doesn't invoke in those cases at all.
 
 **Self-fencing.** If `extend` returns `False`, or raises because we can't prove we still hold the lease, the worker calls `os._exit(75)` (EX_TEMPFAIL) at once. It doesn't finish the step, write a checkpoint or close the run. `sys.exit` would only end the heartbeat thread. `tests/guarantees/test_self_fencing.py` proves the exit: it freezes a worker with SIGSTOP until another worker has finished the run, then wakes it with SIGCONT.
 
+**The lease-lost handler.** What the heartbeat does when it loses the lease is a handler, `on_lease_lost(run, reason)`, passed to `run_worker` and `process_run`.
+
+- **In production it is always the default, `exit_now`**: log at CRITICAL, then `os._exit(75)`.
+- **The handler exists for testability only.** Tests that run the worker inside the pytest process pass a handler that records `(run id, reason)` and stops the loop. The `lease_watch` fixture then fails that test at teardown, naming the run and the reason.
+- **Why not let the default run in tests:** with `os._exit` there, a lost lease would kill the whole pytest process, with no summary and no failure naming the test. That is the likely cause of one unidentified failed run in week 2.
+- **Why not raise an exception in the heartbeat thread:** pytest only warns about it.
+- **Either way, the heartbeat stops.** The real-process tests (`test_worker_crash.py`, `test_self_fencing.py`) keep the real `os._exit`.
+
 **Shutdown.** SIGTERM stops the loop from claiming new runs. A run in progress finishes first.
 
 ## Known limit
