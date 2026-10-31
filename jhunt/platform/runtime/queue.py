@@ -63,7 +63,7 @@ def enqueue(
 
 
 def claim(
-    engine: Engine, lease_seconds: int = LEASE_SECONDS, max_attempts: int = MAX_ATTEMPTS
+    engine: Engine, lease_seconds: float = LEASE_SECONDS, max_attempts: int = MAX_ATTEMPTS
 ) -> Run | None:
     """Lease the next runnable run, or return None if there is nothing to do."""
     owner = uuid.uuid4()
@@ -131,7 +131,7 @@ def claim(
     return Run(owner=owner, **row)
 
 
-def extend(engine: Engine, run: Run, lease_seconds: int = LEASE_SECONDS) -> bool:
+def extend(engine: Engine, run: Run, lease_seconds: float = LEASE_SECONDS) -> bool:
     """Push the lease out. False means this worker no longer owns the run."""
     with engine.begin() as conn:
         result = conn.execute(

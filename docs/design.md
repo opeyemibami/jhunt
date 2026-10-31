@@ -170,6 +170,7 @@ Each guarantee names its mechanism, its limit and the test that proves it. The t
 | No side effect runs twice | Idempotency key and recorded result in the tool gateway | An action whose outcome is unknown is marked unknown and asks you | Crash after a draft is sent for approval; resume does not re-send |
 | A timer fires at least once, and acts once | Leased timer rows; idempotent handler on timer id | Fires up to one tick late | Two ticks race on one timer: one follow-up drafted |
 | A run survives a worker crash | Checkpoint per step; lease expiry; another worker resumes | The interrupted step re-runs | Kill a worker mid-step: run completes, side effects once |
+| A worker that lost its lease writes nothing more | Fenced run writes (lease owner token); the heartbeat exits the process when the lease is lost (ADR 0005) | A stalled worker can still finish its step before its next heartbeat; checkpoint writes aren't fenced yet | Freeze a worker mid-step until another takes over: on waking it exits without writing |
 | An open application survives a workflow change | Versions pinned per thread | Old versions must stay deployable | Deploy v2 with 10 v1 threads open: all finish on v1 |
 | Nothing is sent in your name without approval | Level 2 actions require an approval tied to the exact draft hash | An approval covers one version only | Edit after approval: send is refused until re-approved |
 

@@ -1,6 +1,6 @@
 # 0005: Run queue and leases
 
-Status: proposed in PR 1.2 (week 1); accepted when the owner merges it. PR 1.3 adds the worker's side.
+Status: accepted (owner, PR 1.2). The worker section was added in PR 1.3.
 
 ## Context
 
@@ -67,6 +67,33 @@ From PR 1.3, a worker that gets `False` from `extend` exits immediately (`os._ex
 | Maximum attempts | 5. An attempt is counted when the run is claimed. A graph that raises an error fails the run at once; it is not retried here. Retries come with the tool gateway and Scout in weeks 3 to 4 |
 
 Tests pass shorter leases as arguments.
+
+## The worker (PR 1.3)
+
+`jhunt.platform.runtime.worker.run_worker` runs one claimed run at a time:
+
+1. Look up `(workflow, version)` in the registry. If it isn't there, fail the run with "not registered: workflow 'x' version n" and log it.
+2. Start a heartbeat thread that calls `extend` every 10 s.
+3. Invoke the graph with `durability="sync"`, on a checkpointer connection opened with `autocommit=True` and `row_factory=dict_row`.
+4. Close the run:
+   - `interrupted` if the thread now waits at an interrupt;
+   - `succeeded` otherwise;
+   - `failed`, with `"<ExceptionType>: <message>"`, if the graph raised.
+
+**What to send to the graph.** The thread's checkpoint decides this, not the attempt number, because a run can be on a later attempt after a worker died:
+
+| Thread's checkpoint | Run kind | Sent to `invoke` |
+|---|---|---|
+| None yet | start | The original input |
+| None yet | resume | Nothing: the run fails ("no checkpoint") |
+| Waiting at an interrupt | resume | `Command(resume=payload)`, on the first attempt or after a crash inside the resumed step |
+| Steps pending from an earlier attempt | any | `None`: continue from the last checkpoint. Re-sending the input would apply it twice |
+
+Observed on langgraph 1.2.15: sending `Command(resume=…)` to a thread that is not waiting at an interrupt just continues its pending steps. The table above doesn't rely on that.
+
+**Self-fencing.** If `extend` returns `False`, or raises because we can't prove we still hold the lease, the worker calls `os._exit(75)` (EX_TEMPFAIL) at once. It doesn't finish the step, write a checkpoint or close the run. `sys.exit` would only end the heartbeat thread. `tests/guarantees/test_self_fencing.py` proves the exit: it freezes a worker with SIGSTOP until another worker has finished the run, then wakes it with SIGCONT.
+
+**Shutdown.** SIGTERM stops the loop from claiming new runs. A run in progress finishes first.
 
 ## Known limit
 
