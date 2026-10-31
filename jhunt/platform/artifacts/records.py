@@ -72,6 +72,34 @@ class RecordStore:
             size=len(data),
         )
 
+    def put_or_adopt(self, key: str, data: bytes, content_type: str) -> tuple[StoredRecord, bytes]:
+        """Write a new record, or adopt the one already stored under this key.
+
+        Returns the stored record and its bytes. When the key already exists
+        (an earlier attempt of the same step, or another worker), the existing
+        object wins: its generation is read from storage and its sha256 is
+        computed from its downloaded bytes, never from metadata and never from
+        the bytes just offered, which may differ (ADR 0007).
+        """
+        try:
+            return self.put(key, data, content_type), data
+        except RecordExists:
+            return self._adopt(key)
+
+    def _adopt(self, key: str) -> tuple[StoredRecord, bytes]:
+        blob = self._bucket.get_blob(key)  # the live generation
+        if blob is None or blob.generation is None:
+            raise RuntimeError(f"gs://{self._bucket.name}/{key} exists but could not be read")
+        data: bytes = self._bucket.blob(key, generation=blob.generation).download_as_bytes()
+        record = StoredRecord(
+            uri=f"gs://{self._bucket.name}/{key}",
+            key=key,
+            generation=blob.generation,
+            sha256=hashlib.sha256(data).hexdigest(),
+            size=len(data),
+        )
+        return record, data
+
     def get(self, key: str, generation: int, expected_sha256: str) -> bytes:
         """Read exactly this generation of a record and check its sha256."""
         data: bytes = self._bucket.blob(key, generation=generation).download_as_bytes()

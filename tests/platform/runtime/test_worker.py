@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from typing import Annotated, Any, TypedDict
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
@@ -488,3 +489,27 @@ def test_lease_watch_fails_the_test_with_the_run_and_reason() -> None:
     assert watch.stop.is_set()
     with pytest.raises(pytest.fail.Exception, match="run 7: extend failed: OperationalError"):
         watch.check()
+
+
+def test_nodes_see_the_run_id_in_their_config(db: tuple[Engine, str]) -> None:
+    engine, info = db
+    seen: list[Any] = []
+
+    def build_peek(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:  # type: ignore[type-arg]
+        def peek(state: State, config: RunnableConfig) -> State:
+            seen.append(config["configurable"].get("run_id"))
+            return {}
+
+        graph = StateGraph(State)
+        graph.add_node("peek", peek)
+        graph.add_edge(START, "peek")
+        graph.add_edge("peek", END)
+        return graph.compile(checkpointer=checkpointer)
+
+    registry = Registry()
+    registry.register("peek", 1, build_peek)
+    run_id = queue.enqueue(engine, "t1", "peek", 1, "start", {})
+    run = queue.claim(engine)
+    assert run is not None
+    process_run(engine, info, registry, run, on_lease_lost=watch)
+    assert seen == [run_id]

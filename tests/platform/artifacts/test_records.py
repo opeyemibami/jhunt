@@ -1,6 +1,7 @@
 """Records on the real CI bucket, as the app identity (jhunt-app locally, jhunt-ci in CI)."""
 
 import datetime as dt
+import hashlib
 import inspect
 
 import pytest
@@ -64,3 +65,32 @@ def test_get_detects_a_hash_mismatch(store: RecordStore, record_prefix: str) -> 
     rec = store.put(f"{record_prefix}a.txt", b"hello", "text/plain")
     with pytest.raises(RecordIntegrityError, match="expected 0000"):
         store.get(rec.key, rec.generation, "0000")
+
+
+def test_put_or_adopt_writes_a_new_record(store: RecordStore, record_prefix: str) -> None:
+    rec, data = store.put_or_adopt(f"{record_prefix}a.html", b"first", "text/html")
+    assert data == b"first"
+    assert store.get(rec.key, rec.generation, rec.sha256) == b"first"
+
+
+def test_put_or_adopt_keeps_the_first_object(store: RecordStore, record_prefix: str) -> None:
+    first, _ = store.put_or_adopt(f"{record_prefix}a.html", b"first", "text/html")
+    again, data = store.put_or_adopt(f"{record_prefix}a.html", b"second, different", "text/html")
+    assert again == first
+    assert data == b"first"  # the stored bytes, not the ones just offered
+
+
+def test_adopt_computes_the_sha256_from_the_bytes_not_the_metadata(
+    store: RecordStore, gcs_test_bucket: str, record_prefix: str
+) -> None:
+    # An object whose metadata claims a wrong hash (written directly, as the app).
+    key = f"{record_prefix}lying.html"
+    blob = storage.Client().bucket(gcs_test_bucket).blob(key)
+    blob.metadata = {"sha256": "0" * 64}
+    blob.upload_from_string(b"real bytes", content_type="text/html", if_generation_match=0)
+
+    rec, data = store.put_or_adopt(key, b"other bytes", "text/html")
+
+    assert data == b"real bytes"
+    assert rec.sha256 == hashlib.sha256(b"real bytes").hexdigest()
+    assert rec.generation == blob.generation

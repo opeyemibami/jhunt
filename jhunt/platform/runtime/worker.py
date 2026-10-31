@@ -122,7 +122,11 @@ def process_run(
         # The checkpointer's connection settings AGENTS.md requires.
         with Connection.connect(conninfo, autocommit=True, row_factory=dict_row) as conn:
             graph = builder(PostgresSaver(conn))
-            config: RunnableConfig = {"configurable": {"thread_id": run.thread_id}}
+            # run_id lets nodes tag their tool calls with the run that made them
+            # (ADR 0008); thread_id is what the checkpointer keys on.
+            config: RunnableConfig = {
+                "configurable": {"thread_id": run.thread_id, "run_id": run.id}
+            }
             plan = plan_run(graph, config, run)
             if plan.close_as is None:
                 # durability="sync": each checkpoint is saved before the next
