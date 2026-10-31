@@ -40,7 +40,22 @@ class Settings(BaseSettings):
     # model_routes.toml. For local experiments only.
     model_routes: str | None = None
 
-    @field_validator("anthropic_api_key", "openai_api_key", "model_routes", mode="before")
+    # Google Cloud (ADR 0002). Required by the code that uses storage, which
+    # fails with a clear message if one is missing; the database-only commands
+    # (migrations, the worker loop) don't need them.
+    gcp_project: str | None = None
+    gcs_records_bucket: str | None = None
+    gcs_staging_bucket: str | None = None
+
+    @field_validator(
+        "anthropic_api_key",
+        "openai_api_key",
+        "model_routes",
+        "gcp_project",
+        "gcs_records_bucket",
+        "gcs_staging_bucket",
+        mode="before",
+    )
     @classmethod
     def _empty_is_unset(cls, value: object) -> object:
         return None if value == "" else value

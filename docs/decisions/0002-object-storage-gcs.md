@@ -62,17 +62,21 @@ Each layer is checked by `infra/gcp/check-objectstore.sh`:
    This gap is AGENTS.md hard rule 13. Observed on the real buckets (2026-10-29): GCS refuses a retention change or hold for lack of `storage.objects.update` before it checks `overrideUnlockedRetention`. The app has neither, so either refusal holds.
 2. **Per-object retention: the guard against mistakes.** Until retain-until, nobody can delete or replace that generation without first removing its retention, which needs `overrideUnlockedRetention`. That stops an accidental delete by the owner or any future account with delete.
 3. **Versioning.** A principal with `delete` can still make a retained live object noncurrent. The bytes stay as a noncurrent generation. That's another reason the app must never get `delete` on records.
+
+   Observed on the CI bucket (2026-10-31, owner identity, PR 2.2). Deleting a retained live record was refused. Uploading over it succeeded: the new upload became the live generation, and the original stayed as a noncurrent generation that keeps its retention. So for the app, IAM is the layer that stops an overwrite.
 4. **Soft delete** (30 days on records). Anything deleted from records can be restored for 30 days.
 
 ## Deleting an application's records
 
 Records is versioned, so one record can have several generations: the live one, plus noncurrent ones left by a delete or a replaced upload. Each generation may carry its own retention configuration. Deleting only the live version just makes it noncurrent, and the data stays in place.
 
-So the per-application delete command (week 1, in `jhunt.platform.artifacts` or above it) must, for every object of the application:
+So the per-application delete (`jhunt.platform.artifacts.curator.delete_all_generations`, run through `jhunt-records-delete <bucket> <prefix>`) must, for every object of the application:
 
 1. list every generation, live and noncurrent (`gcloud storage ls --all-versions`, or the API equivalent with `versions=true`);
 2. clear retention on each generation (`--clear-retention --override-unlocked-retention`; owner only);
 3. delete each generation by its generation number.
+
+The command runs as the owner's gcloud login, using a short-lived token from `gcloud auth print-access-token`, not as `jhunt-app`. It lists every generation it will delete and asks for the prefix to be typed back.
 
 After that, each generation is soft-deleted and recoverable for 30 days. That's intended: it is the undo window. `check-objectstore.sh` cleans up its own test records this way.
 
@@ -89,6 +93,9 @@ After that, each generation is soft-deleted and recoverable for 30 days. That's 
 - **Network dependency.** Tests and local runs that touch storage need network access and the owner's ADC. "Never a fake object store" (AGENTS.md) now means real GCS buckets.
 - **No bucket-wide window.** Deleting one application's records is per object and per generation: clear retention, then delete. Nothing else is unprotected while it happens.
 - **Soft-deleted data still costs, for 30 days.** That includes the two tiny test records each `check-objectstore.sh` run leaves soft-deleted.
-- **CI and the records bucket.** CI writing test records into the real records bucket would need cleanup with the owner's override permission. Before CI touches storage (PR 6 or later), decide between separate CI buckets and a prefix in staging only.
+- **CI and the records bucket** (decided in week 2, PR 2.2). Tests never write to records. They use `jhunt-ci-<suffix>`, which is set up like records (versioning, per-object retention enabled, no bucket retention policy), with soft delete off.
+  - `jhunt-app` (local tests) and `jhunt-ci` (GitHub Actions, through Workload Identity Federation) have exactly the app's records roles on it: create, view, and set retention on write.
+  - So `tests/guarantees/test_snapshot_immutable.py` proves the real protections with the real permissions.
+  - Test records carry the real 3-year Unlocked retention. The owner, who has the curator role on the CI bucket, clears them with `jhunt-records-delete jhunt-ci-<suffix> tests/`.
 - **Migration after G1 changes nothing for storage.** Only where the containers run moves.
 - **Offline fallback.** If storage is ever needed without GCS (offline work, an outage), run SeaweedFS behind the same `jhunt.platform.artifacts` interface as an S3-compatible backend. Check that its object lock and versioning behaviour meets the guarantee before relying on it.

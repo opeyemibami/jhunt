@@ -13,10 +13,14 @@
 #   gs://jhunt-staging-$SUFFIX  30-day lifecycle delete; no versioning, no retention, soft delete off
 #   gs://jhunt-records-$SUFFIX  versioning + per-object retention enabled; NO bucket retention
 #                               policy; 30-day soft delete
+#   gs://jhunt-ci-$SUFFIX       set up like records (so tests prove the real protections), but
+#                               soft delete off; tests and CI write here, never to records
 #   jhunt-app   staging: create, view, delete
 #               records: create, view, and set retention at write time; nothing else
 #   owner       records: may remove an object's Unlocked retention and delete that object
 #   jhunt-ci    trusted by GitHub Actions for this repo via Workload Identity Federation
+#   ci bucket   jhunt-app and jhunt-ci: the app's records roles exactly (create, view,
+#               set retention on write); owner: the records curator role, to clear test records
 # It never creates a service account key and never sets a bucket retention policy.
 set -euo pipefail
 
@@ -30,6 +34,7 @@ GITHUB_REPO_ID="${GITHUB_REPO_ID:-1438565653}"
 P=(--project="$GCP_PROJECT")
 STAGING="jhunt-staging-${SUFFIX}"
 RECORDS="jhunt-records-${SUFFIX}"
+CI_BUCKET="jhunt-ci-${SUFFIX}"
 APP_SA="jhunt-app@${GCP_PROJECT}.iam.gserviceaccount.com"
 CI_SA="jhunt-ci@${GCP_PROJECT}.iam.gserviceaccount.com"
 ROLE_PREFIX="projects/${GCP_PROJECT}/roles"
@@ -90,6 +95,23 @@ if [[ "$per_object" != "Enabled" ]]; then
   exit 1
 fi
 
+step "bucket gs://${CI_BUCKET} (tests; set up like records)"
+if ! gcloud storage buckets describe "gs://${CI_BUCKET}" "${P[@]}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${CI_BUCKET}" "${P[@]}" --location="$REGION" \
+    --default-storage-class=STANDARD --uniform-bucket-level-access --public-access-prevention \
+    --enable-per-object-retention
+fi
+# Like records, except soft delete is off: cleared test records should go for good.
+gcloud storage buckets update "gs://${CI_BUCKET}" "${P[@]}" --versioning --clear-retention-period \
+  --clear-soft-delete
+per_object="$(gcloud storage buckets describe "gs://${CI_BUCKET}" "${P[@]}" --format=json |
+  python3 -c 'import json,sys; print((json.load(sys.stdin).get("per_object_retention") or {}).get("mode", ""))')"
+if [[ "$per_object" != "Enabled" ]]; then
+  echo "gs://${CI_BUCKET} exists without per-object retention (got '${per_object}')." >&2
+  echo "It can only be enabled at creation: delete the bucket and re-run." >&2
+  exit 1
+fi
+
 step "service accounts"
 for sa in jhunt-app jhunt-ci; do
   if ! gcloud iam service-accounts describe "${sa}@${GCP_PROJECT}.iam.gserviceaccount.com" "${P[@]}" >/dev/null 2>&1; then
@@ -120,6 +142,17 @@ bind_bucket "$RECORDS" "serviceAccount:${APP_SA}" "${ROLE_PREFIX}/jhuntRetention
 step "owner ${OWNER} on records: remove one object's retention, then delete it"
 bind_bucket "$RECORDS" "user:${OWNER}" "${ROLE_PREFIX}/jhuntRecordsCurator"
 
+step "CI bucket: jhunt-app and jhunt-ci get the app's records roles, the owner the curator role"
+# Exactly the app's records permissions, so tests run with what the app really
+# has: create, view, set retention on write. No delete, update or override.
+for sa in "$APP_SA" "$CI_SA"; do
+  bind_bucket "$CI_BUCKET" "serviceAccount:${sa}" roles/storage.objectCreator
+  bind_bucket "$CI_BUCKET" "serviceAccount:${sa}" roles/storage.objectViewer
+  bind_bucket "$CI_BUCKET" "serviceAccount:${sa}" "${ROLE_PREFIX}/jhuntRetentionSetter"
+done
+# The owner clears test records with jhunt-records-delete (ADR 0002).
+bind_bucket "$CI_BUCKET" "user:${OWNER}" "${ROLE_PREFIX}/jhuntRecordsCurator"
+
 step "let ${OWNER} impersonate jhunt-app (local ADC and the proof script; no keys)"
 retry gcloud iam service-accounts add-iam-policy-binding "$APP_SA" "${P[@]}" \
   --member="user:${OWNER}" --role=roles/iam.serviceAccountTokenCreator >/dev/null
@@ -141,7 +174,7 @@ retry gcloud iam service-accounts add-iam-policy-binding "$CI_SA" "${P[@]}" \
   --role=roles/iam.workloadIdentityUser \
   --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository_id/${GITHUB_REPO_ID}" \
   >/dev/null
-# jhunt-ci gets no bucket roles yet: week 0 CI does not touch storage.
+# jhunt-ci's only bucket roles are on the CI bucket (above).
 
 step "done"
 cat <<EOF
@@ -149,8 +182,10 @@ Add to .env:
   GCP_PROJECT=${GCP_PROJECT}
   GCS_STAGING_BUCKET=${STAGING}
   GCS_RECORDS_BUCKET=${RECORDS}
-For GitHub Actions (PR 6), repository variables, not secrets:
+  GCS_TEST_BUCKET=${CI_BUCKET}
+For GitHub Actions, repository variables (not secrets):
   GCP_WORKLOAD_IDENTITY_PROVIDER=projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/github
   GCP_CI_SERVICE_ACCOUNT=${CI_SA}
+  GCS_TEST_BUCKET=${CI_BUCKET}
 Next: infra/gcp/check-objectstore.sh (see infra/gcp/README.md).
 EOF

@@ -14,13 +14,34 @@ from jhunt.platform.config import Settings, get_settings
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    # Live tests spend real money and need real keys: opt in explicitly.
-    if os.environ.get("RUN_LIVE_MODEL_TESTS") == "1":
-        return
-    skip = pytest.mark.skip(reason="live provider call; set RUN_LIVE_MODEL_TESTS=1 to run")
-    for item in items:
-        if "live" in item.keywords:
-            item.add_marker(skip)
+    # Live tests spend real money and need real keys; owner tests need the
+    # owner's gcloud login and the curator role. Both are opt-in.
+    opt_in = {
+        "live": ("RUN_LIVE_MODEL_TESTS", "live provider call"),
+        "owner": ("RUN_OWNER_TESTS", "needs the owner's gcloud login"),
+    }
+    for marker, (variable, why) in opt_in.items():
+        if os.environ.get(variable) == "1":
+            continue
+        skip = pytest.mark.skip(reason=f"{why}; set {variable}=1 to run")
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip)
+
+
+@pytest.fixture(scope="session")
+def gcs_test_bucket() -> str:
+    """The real CI bucket, set up like records (ADR 0002). Never a fake store."""
+    name = os.environ.get("GCS_TEST_BUCKET")
+    if not name:
+        pytest.fail("GCS_TEST_BUCKET is not set: storage tests need the real CI bucket")
+    return name
+
+
+@pytest.fixture
+def record_prefix() -> str:
+    """A fresh prefix per test. The owner clears old ones with jhunt-records-delete."""
+    return f"tests/{uuid.uuid4().hex}/"
 
 
 @pytest.fixture(scope="session")
