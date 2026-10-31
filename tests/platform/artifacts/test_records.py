@@ -94,3 +94,10 @@ def test_adopt_computes_the_sha256_from_the_bytes_not_the_metadata(
     assert data == b"real bytes"
     assert rec.sha256 == hashlib.sha256(b"real bytes").hexdigest()
     assert rec.generation == blob.generation
+
+
+def test_existing_returns_the_live_record_or_none(store: RecordStore, record_prefix: str) -> None:
+    assert store.existing(f"{record_prefix}missing.html") is None
+    put = store.put(f"{record_prefix}a.html", b"kept", "text/html")
+    found = store.existing(f"{record_prefix}a.html")
+    assert found == (put, b"kept")

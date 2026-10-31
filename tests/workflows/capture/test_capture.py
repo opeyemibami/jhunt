@@ -18,7 +18,7 @@ from jhunt.workflows import capture
 from jhunt.workflows.capture.dedupe import dedupe_key
 from jhunt.workflows.capture.record import record_capture
 from tests.runtime.lease_watch import LeaseWatch
-from tests.workflows.capture.conftest import Site
+from tests.runtime.local_site import Site
 
 ABOUT = (
     "Join the platform team to run durable workflows in production. You will own the job "

@@ -58,9 +58,11 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
 - **Fetch.** One GET with redirects followed and a 20 s timeout. Anything but HTTP 200 raises `FetchFailed`, as does a body over 5 MB. Nothing is stored, and the gateway records nothing, so the next attempt fetches again.
 - **Refuse JavaScript-rendered pages** (owner review, PR 2.5). Many job pages, Ashby especially, build their content with JavaScript, so the fetched HTML is a near-empty shell. If the fetched page has under 500 characters of extracted text, the tool raises `FetchFailed("page looks JavaScript-rendered: <n> chars of text")` before storing anything.
   - A Scout posting avoids the problem: its snapshot comes from the board API's description (planned for Scout).
-  - The one case it can't help: a retry, after a crash between storing and the gateway recording the result, where the earlier attempt kept a good page but the page now fetches as a shell. That retry fails rather than adopting the good page. The window is the gateway's narrow crash window (ADR 0008), so the guard is kept simple.
+- **Check before fetching** (owner review, PR 2.6). The tool first looks for an existing `page.html` under the key (`RecordStore.existing`). If there is one, it adopts it, and `page.txt` too, without fetching at all.
+  - That closes the case the guard alone couldn't help: a retry after a crash between storing and the gateway recording the result, where the earlier attempt kept a good page but the page now fetches as a JavaScript shell. The good snapshot is returned, and no request is made.
+  - It also saves a request on every such retry.
 - **Store.** `<prefix><dedupe_key>/page.html` and `page.txt` in the records bucket, create-only, with the fixed Unlocked 3-year retention. The dedupe key must be 64 hex characters, because it becomes part of the object name.
-- **Adopt, never assume** (owner rule). If an object already exists under the name (an earlier attempt, or another capture of the same posting), it is adopted: `RecordStore.put_or_adopt`.
+- **Adopt, never assume** (owner rule). If an object already exists under the name (an earlier attempt, or another capture of the same posting), it is adopted, either by `RecordStore.existing` before fetching, or by `put_or_adopt` when two uploads race.
   - Its generation is read from storage.
   - Its sha256 is computed from its downloaded bytes, never from its metadata and never from the bytes just fetched, which may differ.
   - So the first stored page wins, and its hash is the one recorded.
@@ -72,6 +74,13 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
 **Recording.** `record_capture` first looks for the application by `dedupe_key`. If it exists, it writes nothing and returns `(id, already_captured=True)`. Otherwise it writes the snapshot row, the application and the event in one transaction. If another capture commits first, the unique `dedupe_key` rolls the whole transaction back, including the snapshot row, and the winner's id is returned. Snapshot rows can never be deleted, so a stray one would stay for good.
 
 **Starting a capture.** `jhunt-capture <url> --company C --title T [--wait]` computes the dedupe key and queues the start run. It says "already captured" if the application exists, and "already queued" if the thread does. With `--wait` it waits for the application. The worker wires Capture to `GCS_RECORDS_BUCKET`.
+
+**The guarantee test** (`tests/guarantees/test_capture_once.py`, PR 2.6). Two captures of one posting, run by two real worker processes, make one application, one snapshot row and one event.
+
+- **The same thread:** the second start is refused (`ThreadExists`).
+- **Two different threads:** the workers really race. In the test's worker process only, a rendezvous holds each worker just after `record_capture` finds no application, until the other has found the same. Both then insert, and the unique `dedupe_key` decides.
+- **Shown failing:** with that constraint dropped, the test makes 2 applications.
+- **Why the rendezvous sits there:** a rendezvous placed before the check wasn't enough. The first worker through could commit before the second checked, so the test passed even without the constraint.
 
 ## Consequences
 

@@ -13,6 +13,9 @@ from sqlalchemy import URL, create_engine, pool, text
 from jhunt.platform.config import Settings, get_settings
 from tests.runtime.lease_watch import LeaseWatch
 
+# The `site` fixture: a local web server whose pages a test can change.
+pytest_plugins = ["tests.runtime.local_site"]
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     # Live tests spend real money and need real keys; owner tests need the
