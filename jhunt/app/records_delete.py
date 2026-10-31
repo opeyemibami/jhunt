@@ -15,7 +15,12 @@ delete); on the CI bucket they are gone at once.
 import argparse
 import sys
 
-from jhunt.platform.artifacts.curator import delete_all_generations, list_generations, owner_client
+from jhunt.platform.artifacts.curator import (
+    check_prefix,
+    delete_all_generations,
+    list_generations,
+    owner_client,
+)
 from jhunt.platform.config import get_settings
 
 
@@ -27,9 +32,11 @@ def main() -> None:
     parser.add_argument("prefix", help="e.g. applications/<id>/ ; must end with /")
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     args = parser.parse_args()
-    if not args.prefix.endswith("/"):
-        # A bare "snapshots/1" would also match "snapshots/10/...".
-        raise SystemExit("jhunt-records-delete: the prefix must end with /")
+    try:
+        # Before anything else: never list, let alone delete, a whole bucket.
+        check_prefix(args.prefix)
+    except ValueError as exc:
+        raise SystemExit(f"jhunt-records-delete: {exc}") from None
 
     project = get_settings().gcp_project
     if project is None:
@@ -43,7 +50,10 @@ def main() -> None:
         state = "live" if gen.live else "noncurrent"
         print(f"  gs://{args.bucket}/{gen.name}#{gen.generation} ({state})")
     if not args.yes:
-        typed = input(f"Delete these {len(generations)} generations? Type the prefix to confirm: ")
+        typed = input(
+            f"Delete {len(generations)} generations under gs://{args.bucket}/{args.prefix}? "
+            "Type the prefix to confirm: "
+        )
         if typed != args.prefix:
             raise SystemExit("jhunt-records-delete: not confirmed; nothing deleted")
     deleted = delete_all_generations(args.bucket, args.prefix, client)

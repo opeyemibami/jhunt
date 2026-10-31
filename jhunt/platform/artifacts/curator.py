@@ -33,8 +33,23 @@ def owner_client(project: str) -> storage.Client:
     return storage.Client(project=project, credentials=Credentials(token))  # type: ignore[no-untyped-call]
 
 
+def check_prefix(prefix: str) -> None:
+    """Refuse any prefix that could reach beyond one folder.
+
+    An empty prefix, or one of only slashes, would match the whole bucket. One
+    without a trailing slash would also match its neighbours ("snapshots/1"
+    matches "snapshots/10/").
+    """
+    if not prefix.strip("/") or not prefix.endswith("/"):
+        raise ValueError(
+            f"refusing prefix {prefix!r}: it must name a folder and end with '/', "
+            "e.g. 'applications/42/'"
+        )
+
+
 def list_generations(bucket_name: str, prefix: str, client: storage.Client) -> list[Generation]:
     """Every generation under the prefix, live and noncurrent."""
+    check_prefix(prefix)
     return [
         Generation(blob.name, blob.generation, blob.time_deleted is None)
         for blob in client.list_blobs(bucket_name, prefix=prefix, versions=True)
@@ -52,6 +67,7 @@ def delete_all_generations(
     generation, so each generation is handled by its number: release any hold,
     clear its retention (with the override), then delete it.
     """
+    check_prefix(prefix)
     bucket = client.bucket(bucket_name)
     deleted = []
     for gen in list_generations(bucket_name, prefix, client):
