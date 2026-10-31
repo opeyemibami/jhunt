@@ -13,6 +13,7 @@ Deferred work that has a target week. One line per item, with where it came from
 
 ## Week 3
 
+- Sources move from docs/sources.md into a sources table that Scout reads, editable from a Sources page in the web app (add, pause, remove; adding checks the endpoint). docs/sources.md stays as the seed data and the record of terms checked. (docs/sources.md PR)
 - WSL isn't always on. Before Scout's daily 07:00 run, decide between keeping the PC awake and moving the worker to Cloud Run early. (PR 2 review)
 
 ## Week 16
