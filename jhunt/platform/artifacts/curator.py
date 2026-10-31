@@ -49,14 +49,20 @@ def delete_all_generations(
     application's records"). Returns what was deleted.
 
     Deleting only the live version would leave the bytes behind as a noncurrent
-    generation, so each generation is handled by its number: clear its
-    retention (with the override), then delete it.
+    generation, so each generation is handled by its number: release any hold,
+    clear its retention (with the override), then delete it.
     """
     bucket = client.bucket(bucket_name)
     deleted = []
     for gen in list_generations(bucket_name, prefix, client):
         blob = bucket.blob(gen.name, generation=gen.generation)
         blob.reload()
+        # The app can't set holds, but the owner can, and a held object can't
+        # be deleted. Release both kinds first.
+        if blob.temporary_hold or blob.event_based_hold:
+            blob.temporary_hold = False
+            blob.event_based_hold = False
+            blob.patch()
         if blob.retention.mode is not None:
             blob.retention.mode = None
             blob.retention.retain_until_time = None

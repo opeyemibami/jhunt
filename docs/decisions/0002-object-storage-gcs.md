@@ -62,6 +62,8 @@ Each layer is checked by `infra/gcp/check-objectstore.sh`:
    This gap is AGENTS.md hard rule 13. Observed on the real buckets (2026-10-29): GCS refuses a retention change or hold for lack of `storage.objects.update` before it checks `overrideUnlockedRetention`. The app has neither, so either refusal holds.
 2. **Per-object retention: the guard against mistakes.** Until retain-until, nobody can delete or replace that generation without first removing its retention, which needs `overrideUnlockedRetention`. That stops an accidental delete by the owner or any future account with delete.
 3. **Versioning.** A principal with `delete` can still make a retained live object noncurrent. The bytes stay as a noncurrent generation. That's another reason the app must never get `delete` on records.
+
+   Observed on the CI bucket (2026-10-31, owner identity, PR 2.2). Deleting a retained live record was refused. Uploading over it succeeded: the new upload became the live generation, and the original stayed as a noncurrent generation that keeps its retention. So for the app, IAM is the layer that stops an overwrite.
 4. **Soft delete** (30 days on records). Anything deleted from records can be restored for 30 days.
 
 ## Deleting an application's records

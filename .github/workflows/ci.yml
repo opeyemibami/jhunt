@@ -22,8 +22,9 @@ jobs:
       contents: read
       id-token: write # Workload Identity Federation: act as jhunt-ci, no key
     env:
-      # Dummy values for the throwaway CI database. CI uses no repository secrets,
-      # no model keys (live tests stay skipped) and no GCP.
+      # Dummy values for the throwaway CI database. CI uses no repository secrets
+      # and no model keys (live tests stay skipped). Its only GCP access is the
+      # CI bucket, as jhunt-ci through Workload Identity Federation (no key).
       POSTGRES_USER: jhunt
       POSTGRES_PASSWORD: ci-only-not-a-secret
       POSTGRES_DB: jhunt
