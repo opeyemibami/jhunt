@@ -150,7 +150,7 @@ Each guarantee has a test in `tests/guarantees/`. These are acceptance criteria.
 | No side effect runs twice | `test_side_effect_once.py`: crash after the approval request; resume does not re-request or re-send |
 | A timer acts once | `test_timer_once.py`: two ticks race on one timer; one follow-up drafted |
 | A run survives a worker crash | `test_worker_crash.py`: kill mid-step; run completes; side effects once |
-| A worker that lost its lease writes nothing more | `test_self_fencing.py`: freeze a worker mid-step until another takes over; on waking it exits without a checkpoint or run write |
+| A worker exits within one heartbeat of losing its lease, without closing the run | `test_self_fencing.py`: freeze a worker mid-step until another takes over; on waking it exits without a checkpoint or run write |
 | An open application survives a workflow change | `test_version_pinning.py`: deploy v2 with 10 open v1 threads; all finish on v1 |
 | Nothing is sent without approval | `test_send_requires_approval.py`: edit after approval; send refused until re-approved |
 | No claim without a fact | `test_fact_bank.py`: draft with an unsupported claim or changed number is blocked |

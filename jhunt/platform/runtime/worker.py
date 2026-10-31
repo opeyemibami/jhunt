@@ -8,6 +8,8 @@ exits on the spot (self-fencing) instead of carrying on beside it.
 import logging
 import os
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -64,8 +66,13 @@ def process_run(
     *,
     lease_seconds: float = queue.LEASE_SECONDS,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
+    before_close: Callable[[queue.Run], None] | None = None,
 ) -> None:
-    """Run one claimed run's graph and close the run."""
+    """Run one claimed run's graph and close the run.
+
+    before_close is a test hook. It runs after the graph has stopped and before
+    the run is closed, which is the window the crash-before-close tests need.
+    """
     builder = registry.get(run.workflow, run.version)
     if builder is None:
         # Old versions stay registered until their last thread closes, so this
@@ -87,10 +94,15 @@ def process_run(
         with Connection.connect(conninfo, autocommit=True, row_factory=dict_row) as conn:
             graph = builder(PostgresSaver(conn))
             config: RunnableConfig = {"configurable": {"thread_id": run.thread_id}}
-            # durability="sync": each checkpoint is saved before the next step
-            # starts, so a crash loses at most the step in progress (ADR 0004).
-            graph.invoke(graph_input(graph, config, run), config, durability="sync")
-            waiting = bool(graph.get_state(config).interrupts)
+            plan = plan_run(graph, config, run)
+            if plan.close_as is None:
+                # durability="sync": each checkpoint is saved before the next
+                # step starts, so a crash loses at most the step in progress.
+                graph.invoke(plan.input, config, durability="sync")
+                waiting = bool(graph.get_state(config).interrupts)
+                status = "interrupted" if waiting else "succeeded"
+            else:
+                status = plan.close_as  # an earlier attempt already did the work
     except Exception as exc:
         log.exception("run %s failed", run.id)
         _stop(beat, done)
@@ -99,37 +111,88 @@ def process_run(
     finally:
         _stop(beat, done)
 
-    status = "interrupted" if waiting else "succeeded"
+    if before_close is not None:
+        before_close(run)
     if not queue.finish(engine, run, status):
         # The lease was lost between the last heartbeat and now. The new owner
         # will redo the work from the last checkpoint; nothing more to do here.
         log.warning("run %s: lost the lease before closing it", run.id)
 
 
-def graph_input(
+def enqueue_resume(
+    engine: Engine,
+    conninfo: str,
+    registry: Registry,
+    thread_id: str,
+    workflow: str,
+    version: int,
+    value: Any,
+) -> int:
+    """Queue a resume run that answers the interrupt the thread waits at now.
+
+    The run records that interrupt's id, so its value can only ever answer that
+    interrupt, even if a retry finds the thread waiting somewhere else (ADR 0005).
+    """
+    builder = registry.get(workflow, version)
+    if builder is None:
+        raise ValueError(f"not registered: workflow {workflow!r} version {version}")
+    with Connection.connect(conninfo, autocommit=True, row_factory=dict_row) as conn:
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        pending = builder(PostgresSaver(conn)).get_state(config).interrupts
+    if len(pending) != 1:
+        raise ValueError(
+            f"thread {thread_id!r} is not waiting at an interrupt"
+            if not pending
+            else f"thread {thread_id!r} waits at {len(pending)} interrupts; expected one"
+        )
+    payload = {"interrupt_id": pending[0].id, "value": value}
+    return queue.enqueue(engine, thread_id, workflow, version, "resume", payload)
+
+
+@dataclass(frozen=True)
+class Plan:
+    """What to do with a claimed run, decided from the thread's checkpoint."""
+
+    input: Any = None  # passed to graph.invoke, when close_as is None
+    close_as: str | None = None  # close the run with this status without invoking
+
+
+def plan_run(
     graph: CompiledStateGraph,  # type: ignore[type-arg]
     config: RunnableConfig,
     run: queue.Run,
-) -> Any:
-    """What to pass to graph.invoke for this run, given the thread's checkpoint.
+) -> Plan:
+    """Decide what this run still has to do (ADR 0005, "What to send").
 
-    A run may be on its second (or later) attempt after a worker died, so the
-    checkpoint, not the attempt number, decides.
+    A run may be on a later attempt after a worker died, at any point: mid-step,
+    or after the graph stopped but before the run was closed. So the checkpoint,
+    not the attempt number, decides.
     """
     state = graph.get_state(config)
     if state.created_at is None:
         # No checkpoint yet: the graph never started on this thread.
         if run.kind == "resume":
             raise ValueError(f"resume for thread {run.thread_id!r}, which has no checkpoint")
-        return run.payload  # a start run's original input
-    if run.kind == "resume" and state.interrupts:
-        # Still waiting at the interrupt: the resume value was never applied
-        # (first attempt, or a crash inside the resumed step). Apply it.
-        return Command(resume=run.payload)
-    # Steps are pending from an earlier attempt that died: continue from the
-    # last checkpoint. Sending the input or resume value again would apply it
-    # twice.
-    return None
+        return Plan(input=run.payload)  # a start run's original input
+
+    if run.kind == "resume":
+        answers = run.payload["interrupt_id"]
+        if any(pending.id == answers for pending in state.interrupts):
+            # The interrupt this run answers is still waiting: answer it by id,
+            # so the value can only ever go to that interrupt.
+            return Plan(input=Command(resume={answers: run.payload["value"]}))
+
+    # From here on, the run's own input or answer is already in the checkpoint:
+    # an earlier attempt applied it and died before closing the run.
+    if state.interrupts:
+        # The graph moved on and stopped at a later interrupt. Nothing to run.
+        return Plan(close_as="interrupted")
+    if state.next:
+        # Steps are pending: continue from the last checkpoint. Sending the
+        # input or the answer again would apply it twice.
+        return Plan(input=None)
+    # No pending steps and no interrupt: the graph already completed.
+    return Plan(close_as="succeeded")
 
 
 def _heartbeat(

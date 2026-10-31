@@ -80,16 +80,30 @@ Tests pass shorter leases as arguments.
    - `succeeded` otherwise;
    - `failed`, with `"<ExceptionType>: <message>"`, if the graph raised.
 
-**What to send to the graph.** The thread's checkpoint decides this, not the attempt number, because a run can be on a later attempt after a worker died:
+**What to do with a claimed run** (`plan_run`). The thread's checkpoint decides this, not the attempt number. A run can be on a later attempt after its worker died at any point: mid-step, or after the graph stopped but before the run was closed.
 
-| Thread's checkpoint | Run kind | Sent to `invoke` |
+| Thread's checkpoint | Run kind | Action |
 |---|---|---|
-| None yet | start | The original input |
-| None yet | resume | Nothing: the run fails ("no checkpoint") |
-| Waiting at an interrupt | resume | `Command(resume=payload)`, on the first attempt or after a crash inside the resumed step |
-| Steps pending from an earlier attempt | any | `None`: continue from the last checkpoint. Re-sending the input would apply it twice |
+| None yet | start | Invoke with the original input |
+| None yet | resume | Fail the run ("no checkpoint") |
+| Waiting at the interrupt this run answers | resume | Invoke with `Command(resume={interrupt_id: value})` |
+| Waiting at another interrupt | any | Close as `interrupted` without invoking: an earlier attempt applied this run's input or answer, and the graph stopped again later |
+| Steps pending, no interrupt | any | Invoke with `None`: continue from the last checkpoint. Re-sending the input or the answer would apply it twice |
+| No steps pending, no interrupt | any | Close as `succeeded` without invoking: an earlier attempt completed the graph |
 
-Observed on langgraph 1.2.15: sending `Command(resume=…)` to a thread that is not waiting at an interrupt just continues its pending steps. The table above doesn't rely on that.
+**Answer by interrupt id.** A resume run answers one specific interrupt, never "whatever the thread waits at now".
+
+- `enqueue_resume` reads the thread's pending interrupt when the resume is queued. It records `{"interrupt_id": …, "value": …}` as the run's payload, and refuses a thread that isn't waiting at exactly one interrupt.
+- The worker sends `Command(resume={interrupt_id: value})` only while that exact interrupt is still pending.
+
+Without this, a worker that applied an answer, reached the next interrupt and died before closing the run would retry with the same value, answering the second question with the first answer.
+
+Observed on langgraph 1.2.15:
+
+- a `Command(resume={id: value})` whose id isn't pending answers nothing, but re-runs the waiting node;
+- `invoke(None)` on a completed thread runs no node and writes no checkpoint.
+
+The table doesn't rely on either: it doesn't invoke in those cases at all.
 
 **Self-fencing.** If `extend` returns `False`, or raises because we can't prove we still hold the lease, the worker calls `os._exit(75)` (EX_TEMPFAIL) at once. It doesn't finish the step, write a checkpoint or close the run. `sys.exit` would only end the heartbeat thread. `tests/guarantees/test_self_fencing.py` proves the exit: it freezes a worker with SIGSTOP until another worker has finished the run, then wakes it with SIGCONT.
 

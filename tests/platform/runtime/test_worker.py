@@ -24,7 +24,7 @@ from sqlalchemy import URL, Engine, create_engine, pool, text
 
 from jhunt.platform.runtime import queue
 from jhunt.platform.runtime.registry import Registry
-from jhunt.platform.runtime.worker import process_run, run_worker
+from jhunt.platform.runtime.worker import enqueue_resume, process_run, run_worker
 
 
 class Crash(BaseException):
@@ -34,6 +34,7 @@ class Crash(BaseException):
 class State(TypedDict, total=False):
     trail: Annotated[list[str], operator.add]
     answer: str
+    answer2: str
 
 
 # Which nodes ran, in order, and which node should crash on its next run.
@@ -97,17 +98,49 @@ def build_slow(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:  # type
     return graph.compile(checkpointer=checkpointer)
 
 
+def build_twice(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:  # type: ignore[type-arg]
+    """Two interrupts in a row: ask -> ask2 -> after."""
+    graph = StateGraph(State)
+    graph.add_node("ask", step("ask", lambda s: {"answer": interrupt("first?")}))
+    graph.add_node("ask2", step("ask2", lambda s: {"answer2": interrupt("second?")}))
+    graph.add_node("after", step("after"))
+    graph.add_edge(START, "ask")
+    graph.add_edge("ask", "ask2")
+    graph.add_edge("ask2", "after")
+    graph.add_edge("after", END)
+    return graph.compile(checkpointer=checkpointer)
+
+
+# Every graph.invoke call on a "spied" graph, with its input.
+invocations: list[Any] = []
+
+
+def build_spied(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:  # type: ignore[type-arg]
+    graph = build_linear(checkpointer)
+    real_invoke = graph.invoke
+
+    def invoke(graph_input: Any, *args: Any, **kwargs: Any) -> Any:
+        invocations.append(graph_input)
+        return real_invoke(graph_input, *args, **kwargs)
+
+    graph.invoke = invoke  # type: ignore[method-assign]
+    return graph
+
+
 REGISTRY = Registry()
 REGISTRY.register("linear", 1, build_linear)
 REGISTRY.register("ask", 1, build_ask)
 REGISTRY.register("broken", 1, build_broken)
 REGISTRY.register("slow", 1, build_slow)
+REGISTRY.register("twice", 1, build_twice)
+REGISTRY.register("spied", 1, build_spied)
 
 
 @pytest.fixture(autouse=True)
 def reset() -> None:
     executed.clear()
     crash_next.clear()
+    invocations.clear()
 
 
 @pytest.fixture
@@ -131,12 +164,30 @@ def crash_once(engine: Engine, info: str) -> queue.Run:
     with pytest.raises(Crash):
         process_run(engine, info, REGISTRY, run)
     # The worker "died": its lease runs out, so another worker may retry.
+    expire(engine, run.id)
+    return run
+
+
+def crash_before_close(engine: Engine, info: str) -> queue.Run:
+    """The graph stops normally, then the worker dies before closing the run."""
+    run = queue.claim(engine)
+    assert run is not None
+
+    def die(_: queue.Run) -> None:
+        raise Crash("before close")
+
+    with pytest.raises(Crash):
+        process_run(engine, info, REGISTRY, run, before_close=die)
+    expire(engine, run.id)
+    return run
+
+
+def expire(engine: Engine, run_id: int) -> None:
     with engine.begin() as conn:
         conn.execute(
             text("UPDATE runs SET lease_until = now() - interval '1 second' WHERE id = :id"),
-            {"id": run.id},
+            {"id": run_id},
         )
-    return run
 
 
 def status(engine: Engine, run_id: int) -> tuple[str, int, str | None]:
@@ -185,7 +236,7 @@ def test_waiting_at_an_interrupt_resumes_with_the_payload(db: tuple[Engine, str]
     work_once(engine, info)
     assert status(engine, start) == ("interrupted", 1, None)
 
-    resume = queue.enqueue(engine, "t1", "ask", 1, "resume", "yes")
+    resume = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
     work_once(engine, info)
 
     assert status(engine, resume) == ("succeeded", 1, None)
@@ -199,7 +250,7 @@ def test_crash_inside_the_resumed_step_resumes_with_the_payload_again(
     engine, info = db
     queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
     work_once(engine, info)
-    resume = queue.enqueue(engine, "t1", "ask", 1, "resume", "yes")
+    resume = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
 
     crash_next.add("ask")  # dies after interrupt() returned, before the step was saved
     crash_once(engine, info)
@@ -217,7 +268,7 @@ def test_crash_in_the_step_after_a_resume_continues_without_resending(
     engine, info = db
     queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
     work_once(engine, info)
-    resume = queue.enqueue(engine, "t1", "ask", 1, "resume", "yes")
+    resume = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
 
     crash_next.add("after")  # the resume was applied and saved; the next step dies
     crash_once(engine, info)
@@ -230,6 +281,80 @@ def test_crash_in_the_step_after_a_resume_continues_without_resending(
     final = state(info, build_ask, "t1")
     assert (final.values["answer"], final.values["trail"]) == ("yes", ["before", "ask", "after"])
     assert executed.count("after") == 2  # only the interrupted step ran again
+
+
+# --- a crash after the graph stopped, before the run was closed --------------
+
+
+def test_enqueue_resume_records_the_interrupt_it_answers(db: tuple[Engine, str]) -> None:
+    engine, info = db
+    queue.enqueue(engine, "t1", "ask", 1, "start", {"trail": []})
+    work_once(engine, info)
+    pending = state(info, build_ask, "t1").interrupts[0]
+
+    run_id = enqueue_resume(engine, info, REGISTRY, "t1", "ask", 1, "yes")
+
+    with engine.connect() as conn:
+        payload = conn.execute(
+            text("SELECT payload FROM runs WHERE id = :id"), {"id": run_id}
+        ).scalar_one()
+    assert payload == {"interrupt_id": pending.id, "value": "yes"}
+
+
+def test_enqueue_resume_refuses_a_thread_that_is_not_waiting(db: tuple[Engine, str]) -> None:
+    engine, info = db
+    queue.enqueue(engine, "t1", "linear", 1, "start", {"trail": []})
+    work_once(engine, info)  # runs to the end, never waits
+    with pytest.raises(ValueError, match="not waiting at an interrupt"):
+        enqueue_resume(engine, info, REGISTRY, "t1", "linear", 1, "yes")
+
+
+def test_resume_applied_then_crash_before_close_leaves_the_next_interrupt_unanswered(
+    db: tuple[Engine, str],
+) -> None:
+    engine, info = db
+    queue.enqueue(engine, "t1", "twice", 1, "start", {"trail": []})
+    work_once(engine, info)  # waits at the first interrupt
+    first = enqueue_resume(engine, info, REGISTRY, "t1", "twice", 1, "first answer")
+
+    # Attempt 1 answers the first interrupt, the graph stops at the second
+    # one, and the worker dies before closing the run.
+    crash_before_close(engine, info)
+    second = state(info, build_twice, "t1").interrupts
+    assert [i.value for i in second] == ["second?"]
+
+    work_once(engine, info)  # the retry
+
+    # The retry must not answer the second interrupt with the first answer.
+    assert status(engine, first) == ("interrupted", 2, None)
+    after = state(info, build_twice, "t1")
+    assert [i.value for i in after.interrupts] == ["second?"]
+    assert after.interrupts[0].id == second[0].id
+    assert after.values.get("answer") == "first answer"
+    assert "answer2" not in after.values
+    assert executed.count("ask2") == 1  # not re-run by the retry
+
+    # The second interrupt still takes its own answer.
+    reply = enqueue_resume(engine, info, REGISTRY, "t1", "twice", 1, "second answer")
+    work_once(engine, info)
+    assert status(engine, reply) == ("succeeded", 1, None)
+    assert state(info, build_twice, "t1").values["answer2"] == "second answer"
+
+
+def test_completed_then_crash_before_close_is_closed_without_invoking(
+    db: tuple[Engine, str],
+) -> None:
+    engine, info = db
+    run_id = queue.enqueue(engine, "t1", "spied", 1, "start", {"trail": ["input"]})
+
+    crash_before_close(engine, info)  # the graph completed; the run is still open
+    assert state(info, build_linear, "t1").next == ()
+
+    work_once(engine, info)  # the retry
+
+    assert status(engine, run_id) == ("succeeded", 2, None)
+    assert invocations == [{"trail": ["input"]}]  # attempt 1 only; the retry didn't invoke
+    assert executed == ["step1", "step2", "step3"]
 
 
 # --- failures ---------------------------------------------------------------
