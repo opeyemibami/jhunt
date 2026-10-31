@@ -16,7 +16,15 @@ import httpx
 
 from jhunt.platform.artifacts import RecordStore, StoredRecord
 from jhunt.platform.gateway import Tool
-from jhunt.workflows.capture.boards import PUBLIC_APIS, JobNotFound, board_job, job_description
+from jhunt.workflows.capture.boards import (
+    PUBLIC_APIS,
+    BoardJob,
+    JobNotFound,
+    board_job,
+    embedded_board,
+    embedded_job_id,
+    job_description,
+)
 from jhunt.workflows.capture.text import html_to_text
 
 ACTION = "snapshot_job_description"
@@ -68,6 +76,15 @@ def snapshot_posting_tool(
 def _job_html(http: httpx.Client, url: str, max_bytes: int, apis: dict[str, str]) -> bytes:
     """The HTML to keep for a job link. Raises FetchFailed with the reason."""
     job = board_job(url)
+    embedded = embedded_job_id(url)
+    if job is None and embedded is not None:
+        # A board embedded in a company's careers page: fetch the page once,
+        # only to find the board's name in it. Never keep the page itself.
+        kind, job_id = embedded
+        board = embedded_board(kind, _fetch(http, url, max_bytes))
+        if board is None:
+            raise FetchFailed("embedded board not found")
+        job = BoardJob(kind, board, job_id)
     if job is not None:
         # Greenhouse, Ashby and Lever: ask the board's API, never the page
         # (a closed job's page redirects to the board's list; boards.py).

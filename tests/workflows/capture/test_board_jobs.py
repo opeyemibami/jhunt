@@ -11,7 +11,7 @@ import pytest
 from google.cloud import storage
 
 from jhunt.platform.artifacts import RecordStore
-from jhunt.workflows.capture.boards import BoardJob, board_job
+from jhunt.workflows.capture.boards import BoardJob, board_job, embedded_job_id
 from jhunt.workflows.capture.snapshot import FetchFailed, snapshot_posting_tool
 from tests.runtime.local_site import Site
 
@@ -180,3 +180,96 @@ def test_a_redirect_that_keeps_the_path_is_fine(
         {"url": site.url("careers/jobs/987"), "dedupe_key": KEY}
     )
     assert result["html"]["sha256"]
+
+
+# --- boards embedded in a company's own careers page ------------------------
+
+ASHBY_JID = "5635dd7e-a0ca-414d-b738-71500502dba9"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://acme.example/careers?gh_jid=4012345", ("greenhouse", "4012345")),
+        (f"https://adaptionlabs.ai/careers?ashby_jid={ASHBY_JID}", ("ashby", ASHBY_JID)),
+        ("https://acme.example/careers?gh_jid=abc", None),  # not a Greenhouse id
+        ("https://acme.example/careers?ashby_jid=123", None),  # not a uuid
+        ("https://acme.example/careers", None),
+    ],
+)
+def test_embedded_job_ids_are_recognised(url: str, expected: tuple[str, str] | None) -> None:
+    assert embedded_job_id(url) == expected
+
+
+@pytest.mark.parametrize(
+    "embed",
+    [
+        '<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>',
+        '<a href="https://job-boards.greenhouse.io/acme/jobs/4012345">Apply</a>',
+    ],
+)
+def test_an_embedded_greenhouse_board_is_read_from_its_api(
+    site: Site, store: RecordStore, http: httpx.Client, record_prefix: str, embed: str
+) -> None:
+    site.pages["careers?gh_jid=4012345"] = (200, f"<html><body>{embed}</body></html>".encode())
+    api = {"id": 4012345, "content": html.escape(DESCRIPTION)}
+    site.pages["v1/boards/acme/jobs/4012345?content=true"] = (200, json.dumps(api).encode())
+
+    result = tool_for(site, store, http, record_prefix).run(
+        {"url": site.url("careers?gh_jid=4012345"), "dedupe_key": KEY}
+    )
+
+    kept = store.get(
+        f"{record_prefix}{KEY}/page.html", result["html"]["generation"], result["html"]["sha256"]
+    )
+    assert kept == DESCRIPTION.encode()  # the job's description, not the careers page
+    assert site.hits == ["careers?gh_jid=4012345", "v1/boards/acme/jobs/4012345?content=true"]
+
+
+def test_an_embedded_ashby_board_is_read_from_its_api(
+    site: Site, store: RecordStore, http: httpx.Client, record_prefix: str
+) -> None:
+    # The real case: adaptionlabs.ai/careers?ashby_jid=... embeds jobs.ashbyhq.com/<org>.
+    page = '<html><body><script src="https://jobs.ashbyhq.com/adaption/embed?version=2"></script></body></html>'
+    site.pages[f"careers?ashby_jid={ASHBY_JID}"] = (200, page.encode())
+    board = {"jobs": [{"id": ASHBY_JID, "descriptionHtml": DESCRIPTION}]}
+    site.pages["posting-api/job-board/adaption"] = (200, json.dumps(board).encode())
+
+    result = tool_for(site, store, http, record_prefix).run(
+        {"url": site.url(f"careers?ashby_jid={ASHBY_JID}"), "dedupe_key": KEY}
+    )
+
+    kept = store.get(
+        f"{record_prefix}{KEY}/page.html", result["html"]["generation"], result["html"]["sha256"]
+    )
+    assert kept == DESCRIPTION.encode()
+
+
+def test_an_embedded_job_whose_board_cant_be_found_is_refused(
+    site: Site, store: RecordStore, http: httpx.Client, gcs_test_bucket: str, record_prefix: str
+) -> None:
+    # A careers page long enough to pass the page guard, with no board in it:
+    # it must not be kept as the job (no fallback to the page).
+    site.pages[f"careers?ashby_jid={ASHBY_JID}"] = (
+        200,
+        f"<html><body>{DESCRIPTION}</body></html>".encode(),
+    )
+    with pytest.raises(FetchFailed, match="embedded board not found"):
+        tool_for(site, store, http, record_prefix).run(
+            {"url": site.url(f"careers?ashby_jid={ASHBY_JID}"), "dedupe_key": KEY}
+        )
+    assert stored(gcs_test_bucket, record_prefix) == []
+
+
+def test_a_page_naming_two_different_boards_is_refused(
+    site: Site, store: RecordStore, http: httpx.Client, record_prefix: str
+) -> None:
+    page = (
+        '<a href="https://jobs.ashbyhq.com/adaption/x">one</a>'
+        '<a href="https://jobs.ashbyhq.com/partner/y">two</a>'
+    )
+    site.pages[f"careers?ashby_jid={ASHBY_JID}"] = (200, page.encode())
+    with pytest.raises(FetchFailed, match="embedded board not found"):
+        tool_for(site, store, http, record_prefix).run(
+            {"url": site.url(f"careers?ashby_jid={ASHBY_JID}"), "dedupe_key": KEY}
+        )
