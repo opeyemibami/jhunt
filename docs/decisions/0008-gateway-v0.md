@@ -32,13 +32,17 @@ The gateway is scheduled for weeks 3 to 4, but Capture (week 2) already fetches 
 - **A tool that raises** records nothing, and the error propagates. The next attempt runs it again. A transient failure, such as a network timeout, must not become a permanent recorded answer.
 - **Unknown outcomes** (design.md: "marked unknown and asks you") come with level 2 actions, where they matter.
 
-**Results are small.** A recorded result is returned on every repeat and lives in the audit log for good. So a result carries references (URIs, generations, hashes, ids), never page content.
+**Arguments are small and deterministic; results are references** (owner review, PR 2.4).
+
+- **A tool's arguments** must be small and the same every time a given step runs: URLs, ids, keys. They must never be content fetched earlier. The arguments are hashed into `args_hash` and checked on every repeat, so content that can change between attempts (such as a page fetched twice) would make a re-run look like a different call.
+- **A tool's result** carries references (URIs, generations, hashes, ids), not payloads. A recorded result is returned on every repeat and lives in the audit log for good.
+- **What follows.** Work that fetches something and then stores it is one tool, not two passing content between them. Capture's `snapshot_posting(url, dedupe_key)` fetches the page and stores it, and returns only references (ADR 0007).
 
 ## Consequences
 
 - **The window a recorded result can't cover.** A crash after a tool ran but before its row was recorded means the tool runs again on resume. So every tool must be safe to repeat. The week 2 tools are, by construction (ADR 0007, PR 2.5):
   - **fetching** is read-only;
-  - **the snapshot upload** is create-only, under a name derived from the idempotency key. A repeat that finds the object adopts it: its generation is read from storage, and its sha256 is computed from the downloaded bytes, never from metadata.
+  - **the snapshot upload** is create-only, under names derived from the posting's `dedupe_key`. A repeat that finds an object adopts it: its generation is read from storage, and its sha256 is computed from the downloaded bytes, never from metadata. Fetching and storing are one tool, `snapshot_posting` (see below).
 - **Level 1 says "then notify".** v0 records the call in the audit log, but sends no notification. Notifications come with the digest (weeks 3 to 4).
-- **`run_id`** is passed by the caller. PR 2.5 has the worker put the run id into the graph config, so nodes can pass it on.
+- **`run_id`** is passed by the caller. The worker puts it into the graph config (`config["configurable"]["run_id"]`, from PR 2.5), so nodes pass it on.
 - **The gateway is in `jhunt.platform.gateway`**, one of the four packages the owner must be able to explain line by line. It is a single module of explicit SQL, with no framework.

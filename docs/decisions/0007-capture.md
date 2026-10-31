@@ -1,6 +1,6 @@
 # 0007: Capture: data model and dedupe key
 
-Status: proposed in PR 2.3 (week 2); accepted when the owner merges it. PR 2.5 adds the snapshot rules.
+Status: accepted (owner, PR 2.3). The snapshot rules were added in PR 2.5.
 
 ## Context
 
@@ -45,6 +45,30 @@ design.md lists the fields but not how a snapshot's parts are stored, how "never
 3. **The title**, normalised the same way.
 
 The rules are conservative on purpose. A missed duplicate costs a second application row. A wrong merge loses a job. Parameters that identify a job (`gh_jid`, `id`, ...) are kept.
+
+## Snapshot rules (PR 2.5)
+
+**The workflow** (`capture`, version 1) has one thread per posting, `capture-<dedupe_key>`, and two steps:
+
+1. **`snapshot`** calls the gateway tool `snapshot_posting(url, dedupe_key)` once per thread (step key `page`). A re-run gets the recorded references back.
+2. **`record`** writes the snapshot row, the application (stage `captured`) and a `captured` event.
+
+**`snapshot_posting` is one tool, not two** (ADR 0008: arguments small and deterministic, results references). It fetches and stores in one call, and returns only `{html, text}`, each with its `uri`, `generation` and `sha256`.
+
+- **Fetch.** One GET with redirects followed and a 20 s timeout. Anything but HTTP 200 raises `FetchFailed`, as does a body over 5 MB. Nothing is stored, and the gateway records nothing, so the next attempt fetches again.
+- **Store.** `<prefix><dedupe_key>/page.html` and `page.txt` in the records bucket, create-only, with the fixed Unlocked 3-year retention. The dedupe key must be 64 hex characters, because it becomes part of the object name.
+- **Adopt, never assume** (owner rule). If an object already exists under the name (an earlier attempt, or another capture of the same posting), it is adopted: `RecordStore.put_or_adopt`.
+  - Its generation is read from storage.
+  - Its sha256 is computed from its downloaded bytes, never from its metadata and never from the bytes just fetched, which may differ.
+  - So the first stored page wins, and its hash is the one recorded.
+- **Text comes from the kept HTML.** It is extracted from the HTML that was kept, not from this fetch, so the two records always describe one page. Extraction uses the stdlib HTML parser:
+  - scripts, styles, `noscript`, `template` and `svg` are dropped;
+  - block tags start a new line, and whitespace is collapsed;
+  - bytes are read as UTF-8, with replacement characters for anything else.
+
+**Recording.** `record_capture` first looks for the application by `dedupe_key`. If it exists, it writes nothing and returns `(id, already_captured=True)`. Otherwise it writes the snapshot row, the application and the event in one transaction. If another capture commits first, the unique `dedupe_key` rolls the whole transaction back, including the snapshot row, and the winner's id is returned. Snapshot rows can never be deleted, so a stray one would stay for good.
+
+**Starting a capture.** `jhunt-capture <url> --company C --title T [--wait]` computes the dedupe key and queues the start run. It says "already captured" if the application exists, and "already queued" if the thread does. With `--wait` it waits for the application. The worker wires Capture to `GCS_RECORDS_BUCKET`.
 
 ## Consequences
 

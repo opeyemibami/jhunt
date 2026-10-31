@@ -1,0 +1,130 @@
+"""The Capture workflow end to end, in-process: a worker runs it, the snapshot
+is kept in records, and the application, snapshot row and event are recorded."""
+
+from collections.abc import Iterator
+from typing import Any
+
+import httpx
+import pytest
+from sqlalchemy import URL, Engine, create_engine, pool, text
+
+from jhunt.platform.artifacts import RecordStore
+from jhunt.platform.gateway import ToolGateway
+from jhunt.platform.runtime import queue
+from jhunt.platform.runtime.registry import Registry
+from jhunt.platform.runtime.threads import enqueue_start
+from jhunt.platform.runtime.worker import process_run
+from jhunt.workflows import capture
+from jhunt.workflows.capture.dedupe import dedupe_key
+from jhunt.workflows.capture.record import record_capture
+from tests.runtime.lease_watch import LeaseWatch
+from tests.workflows.capture.conftest import Site
+
+PAGE = b"<html><body><h1>Platform Engineer</h1><p>Dublin, Ireland</p></body></html>"
+
+
+@pytest.fixture
+def db(migrated_db_url: URL) -> Iterator[tuple[Engine, str]]:
+    engine = create_engine(migrated_db_url, poolclass=pool.NullPool)
+    info = migrated_db_url.set(drivername="postgresql").render_as_string(hide_password=False)
+    yield engine, info
+    engine.dispose()
+
+
+def wired(engine: Engine, store: RecordStore, http: httpx.Client, prefix: str) -> Registry:
+    """What jhunt.app wires in production, with the test's storage prefix."""
+    gateway = ToolGateway(engine, [capture.snapshot_posting_tool(store, http, prefix=prefix)])
+    registry = Registry()
+    registry.register(capture.WORKFLOW, capture.VERSION, capture.build(engine, gateway))
+    return registry
+
+
+def rows(engine: Engine, table: str) -> list[dict[str, Any]]:
+    with engine.connect() as conn:
+        return [
+            dict(r) for r in conn.execute(text(f"SELECT * FROM {table} ORDER BY id")).mappings()
+        ]
+
+
+def start(engine: Engine, registry: Registry, url: str) -> tuple[str, int]:
+    key = dedupe_key(url, "Acme", "Platform Engineer")
+    thread_id = capture.thread_id_for(key)
+    run_id = enqueue_start(
+        engine,
+        registry,
+        thread_id,
+        capture.WORKFLOW,
+        {"url": url, "company": "Acme", "title": "Platform Engineer", "dedupe_key": key},
+    )
+    return key, run_id
+
+
+def test_capture_keeps_the_page_and_opens_the_application(
+    db: tuple[Engine, str],
+    site: Site,
+    store: RecordStore,
+    http: httpx.Client,
+    record_prefix: str,
+    lease_watch: LeaseWatch,
+) -> None:
+    engine, info = db
+    site.pages["jobs/42"] = (200, PAGE)
+    registry = wired(engine, store, http, record_prefix)
+    key, run_id = start(engine, registry, site.url("jobs/42"))
+
+    run = queue.claim(engine)
+    assert run is not None and run.id == run_id
+    process_run(engine, info, registry, run, on_lease_lost=lease_watch)
+
+    [app] = rows(engine, "applications")
+    [snap] = rows(engine, "jd_snapshots")
+    [event] = rows(engine, "events")
+    [call] = rows(engine, "tool_calls")
+    assert (app["dedupe_key"], app["company"], app["role"], app["stage"]) == (
+        key,
+        "Acme",
+        "Platform Engineer",
+        "captured",
+    )
+    assert (app["snapshot_id"], snap["url"]) == (snap["id"], site.url("jobs/42"))
+    assert (event["application_id"], event["type"], event["actor"]) == (
+        app["id"],
+        "captured",
+        "workflow",
+    )
+    assert (call["tool"], call["run_id"], call["thread_id"]) == (
+        "snapshot_posting",
+        run_id,
+        capture.thread_id_for(key),
+    )
+    # The snapshot row points at exactly the bytes that were kept.
+    html_key = snap["html_uri"].split("/", 3)[3]
+    text_key = snap["text_uri"].split("/", 3)[3]
+    assert store.get(html_key, snap["html_generation"], snap["html_sha256"]) == PAGE
+    assert store.get(text_key, snap["text_generation"], snap["text_sha256"]) == (
+        b"Platform Engineer\nDublin, Ireland"
+    )
+    with engine.connect() as conn:
+        status = conn.execute(
+            text("SELECT status FROM runs WHERE id = :id"), {"id": run_id}
+        ).scalar()
+    assert status == "succeeded"
+
+
+def test_recording_twice_makes_one_application_and_one_snapshot(db: tuple[Engine, str]) -> None:
+    # A re-run of the record step (after a crash) must not add rows: snapshot
+    # rows can never be deleted, so a stray one would stay for good.
+    engine, _ = db
+    refs = {
+        "html": {"uri": "gs://b/k/page.html", "generation": 1, "sha256": "aa"},
+        "text": {"uri": "gs://b/k/page.txt", "generation": 2, "sha256": "bb"},
+    }
+    args = {"url": "https://x/1", "company": "Acme", "title": "Engineer", "dedupe_key": "k" * 64}
+    first = record_capture(engine, snapshot=refs, **args)
+    second = record_capture(engine, snapshot=refs, **args)
+
+    assert first == (first[0], False)
+    assert second == (first[0], True)  # already captured: the same application
+    assert len(rows(engine, "applications")) == 1
+    assert len(rows(engine, "jd_snapshots")) == 1
+    assert len(rows(engine, "events")) == 1
