@@ -6,6 +6,7 @@ import pytest
 
 PACKAGES = [
     "jhunt",
+    "jhunt.app",
     "jhunt.platform",
     "jhunt.platform.runtime",
     "jhunt.platform.timers",

@@ -65,6 +65,7 @@ jhunt/             # the one Python namespace package (a top-level `platform` wo
   workflows/       # one package per workflow; depends on jhunt.platform only through its public API
     scout/ capture/ application_pack/ workspace/ tracker/ prep/ funnel/
   api/             # FastAPI service
+  app/             # composition root: wires workflows into the runtime; jhunt-worker entry point; nothing imports it
 config/            # non-secret app config in git, e.g. model_routes.toml
 migrations/        # Alembic
 web/               # Next.js app
