@@ -235,6 +235,7 @@ repo/
     workflows/         # one package per workflow; workflows never import each other
       scout/ capture/ application_pack/ workspace/ tracker/ prep/ funnel/
     api/               # FastAPI
+    app/               # composition root: wires workflows into the runtime; nothing imports it
   config/              # non-secret app config in git, e.g. model_routes.toml
   migrations/          # Alembic
   web/  evals/  infra/  tests/

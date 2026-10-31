@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jhunt-worker = "jhunt.platform.runtime.worker:main"
+jhunt-worker = "jhunt.app.worker:main"
 jhunt-api = "jhunt.api.main:main"
 
 [build-system]
@@ -74,9 +74,11 @@ source_modules = ["jhunt.platform"]
 forbidden_modules = ["jhunt.workflows", "jhunt.api"]
 
 [[tool.importlinter.contracts]]
-name = "api above workflows above platform"
+name = "app above api above workflows above platform"
 type = "layers"
-layers = ["jhunt.api", "jhunt.workflows", "jhunt.platform"]
+# jhunt.app is the composition root: it wires workflows into the runtime, so
+# nothing below it may import it.
+layers = ["jhunt.app", "jhunt.api", "jhunt.workflows", "jhunt.platform"]
 
 [[tool.importlinter.contracts]]
 name = "workflows never import each other"
