@@ -1,6 +1,6 @@
 # 0005: Run queue and leases
 
-Status: proposed in PR 1.2 (week 1); accepted when the owner merges it. PR 1.3 adds the worker's side.
+Status: accepted (owner, PR 1.2). The worker section was added in PR 1.3.
 
 ## Context
 
@@ -67,6 +67,47 @@ From PR 1.3, a worker that gets `False` from `extend` exits immediately (`os._ex
 | Maximum attempts | 5. An attempt is counted when the run is claimed. A graph that raises an error fails the run at once; it is not retried here. Retries come with the tool gateway and Scout in weeks 3 to 4 |
 
 Tests pass shorter leases as arguments.
+
+## The worker (PR 1.3)
+
+`jhunt.platform.runtime.worker.run_worker` runs one claimed run at a time:
+
+1. Look up `(workflow, version)` in the registry. If it isn't there, fail the run with "not registered: workflow 'x' version n" and log it.
+2. Start a heartbeat thread that calls `extend` every 10 s.
+3. Invoke the graph with `durability="sync"`, on a checkpointer connection opened with `autocommit=True` and `row_factory=dict_row`.
+4. Close the run:
+   - `interrupted` if the thread now waits at an interrupt;
+   - `succeeded` otherwise;
+   - `failed`, with `"<ExceptionType>: <message>"`, if the graph raised.
+
+**What to do with a claimed run** (`plan_run`). The thread's checkpoint decides this, not the attempt number. A run can be on a later attempt after its worker died at any point: mid-step, or after the graph stopped but before the run was closed.
+
+| Thread's checkpoint | Run kind | Action |
+|---|---|---|
+| None yet | start | Invoke with the original input |
+| None yet | resume | Fail the run ("no checkpoint") |
+| Waiting at the interrupt this run answers | resume | Invoke with `Command(resume={interrupt_id: value})` |
+| Waiting at another interrupt | any | Close as `interrupted` without invoking: an earlier attempt applied this run's input or answer, and the graph stopped again later |
+| Steps pending, no interrupt | any | Invoke with `None`: continue from the last checkpoint. Re-sending the input or the answer would apply it twice |
+| No steps pending, no interrupt | any | Close as `succeeded` without invoking: an earlier attempt completed the graph |
+
+**Answer by interrupt id.** A resume run answers one specific interrupt, never "whatever the thread waits at now".
+
+- `enqueue_resume` reads the thread's pending interrupt when the resume is queued. It records `{"interrupt_id": …, "value": …}` as the run's payload, and refuses a thread that isn't waiting at exactly one interrupt.
+- The worker sends `Command(resume={interrupt_id: value})` only while that exact interrupt is still pending.
+
+Without this, a worker that applied an answer, reached the next interrupt and died before closing the run would retry with the same value, answering the second question with the first answer.
+
+Observed on langgraph 1.2.15:
+
+- a `Command(resume={id: value})` whose id isn't pending answers nothing, but re-runs the waiting node;
+- `invoke(None)` on a completed thread runs no node and writes no checkpoint.
+
+The table doesn't rely on either: it doesn't invoke in those cases at all.
+
+**Self-fencing.** If `extend` returns `False`, or raises because we can't prove we still hold the lease, the worker calls `os._exit(75)` (EX_TEMPFAIL) at once. It doesn't finish the step, write a checkpoint or close the run. `sys.exit` would only end the heartbeat thread. `tests/guarantees/test_self_fencing.py` proves the exit: it freezes a worker with SIGSTOP until another worker has finished the run, then wakes it with SIGCONT.
+
+**Shutdown.** SIGTERM stops the loop from claiming new runs. A run in progress finishes first.
 
 ## Known limit
 

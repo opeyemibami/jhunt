@@ -1,17 +1,43 @@
-"""The installed console scripts exist and are stubs until their week arrives."""
+"""The installed console scripts exist and behave as expected for this week."""
 
 import shutil
+import signal
 import subprocess
+import threading
 
 import pytest
 
 
-@pytest.mark.parametrize("script", ["jhunt-worker", "jhunt-api"])
-def test_console_script_is_a_not_implemented_stub(script: str) -> None:
-    path = shutil.which(script)
-    assert path is not None, f"{script} is not installed; run `uv sync`"
+def test_api_is_a_not_implemented_stub() -> None:
+    path = shutil.which("jhunt-api")
+    assert path is not None, "jhunt-api is not installed; run `uv sync`"
 
     result = subprocess.run([path], capture_output=True, text=True, timeout=30)
 
     assert result.returncode == 1
-    assert result.stderr.strip() == f"{script}: not implemented"
+    assert result.stderr.strip() == "jhunt-api: not implemented"
+
+
+def test_worker_starts_and_stops_cleanly_on_sigterm() -> None:
+    path = shutil.which("jhunt-worker")
+    assert path is not None, "jhunt-worker is not installed; run `uv sync`"
+
+    proc = subprocess.Popen([path], stderr=subprocess.PIPE, text=True)
+    started = threading.Event()
+
+    def watch() -> None:
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            if "jhunt-worker started" in line:
+                started.set()
+
+    threading.Thread(target=watch, daemon=True).start()
+    try:
+        if not started.wait(timeout=30):
+            pytest.fail("jhunt-worker did not report that it started")
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

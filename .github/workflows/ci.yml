@@ -65,23 +65,7 @@ jobs:
         run: uv run pytest
 
       - name: pytest tests/guarantees
-        run: |
-          # Exit 5 means "no tests collected". tests/guarantees has no test files
-          # until the first guarantee test lands in week 1; see docs/backlog.md.
-          # Exit 5 is accepted only while there are no test_*.py files at all: if
-          # test files exist and pytest still collects nothing, that is a failure.
-          set +e
-          uv run pytest tests/guarantees
-          code=$?
-          if [ "$code" -eq 5 ]; then
-            if find tests/guarantees -name 'test_*.py' | grep -q .; then
-              echo "::error::tests/guarantees has test files but pytest collected none"
-              exit 1
-            fi
-            echo "::warning::tests/guarantees has no test files yet (exit 5 accepted until week 1)"
-            exit 0
-          fi
-          exit "$code"
+        run: uv run pytest tests/guarantees
 
   secret-scan:
     runs-on: ubuntu-24.04

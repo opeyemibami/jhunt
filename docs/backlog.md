@@ -2,10 +2,6 @@
 
 Deferred work that has a target week. One line per item, with where it came from. Remove an item when its pull request merges.
 
-## Week 1
-
-- CI: once the first guarantee test lands, remove the exit-5 allowance from the `pytest tests/guarantees` step in `.github/workflows/ci.yml`. (PR 3 review; PR 6)
-
 ## Week 2
 
 - Version pinning (week 1 plan, PR 1.4), before Capture: a `threads` table pins each thread's workflow version; resumes use the pinned version; a `graph_versions` table stores a fingerprint of each registered version's node names and edges, and a worker refuses to start if a registered version's fingerprint changed (hard rule 12). The ADR states the fingerprint catches node and edge changes, not code changes inside a node. Guarantee test: `tests/guarantees/test_version_pinning.py`. (Week 1 plan review)
