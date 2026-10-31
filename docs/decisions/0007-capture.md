@@ -56,6 +56,9 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
 **`snapshot_posting` is one tool, not two** (ADR 0008: arguments small and deterministic, results references). It fetches and stores in one call, and returns only `{html, text}`, each with its `uri`, `generation` and `sha256`.
 
 - **Fetch.** One GET with redirects followed and a 20 s timeout. Anything but HTTP 200 raises `FetchFailed`, as does a body over 5 MB. Nothing is stored, and the gateway records nothing, so the next attempt fetches again.
+- **Refuse JavaScript-rendered pages** (owner review, PR 2.5). Many job pages, Ashby especially, build their content with JavaScript, so the fetched HTML is a near-empty shell. If the fetched page has under 500 characters of extracted text, the tool raises `FetchFailed("page looks JavaScript-rendered: <n> chars of text")` before storing anything.
+  - A Scout posting avoids the problem: its snapshot comes from the board API's description (planned for Scout).
+  - The one case it can't help: a retry, after a crash between storing and the gateway recording the result, where the earlier attempt kept a good page but the page now fetches as a shell. That retry fails rather than adopting the good page. The window is the gateway's narrow crash window (ADR 0008), so the guard is kept simple.
 - **Store.** `<prefix><dedupe_key>/page.html` and `page.txt` in the records bucket, create-only, with the fixed Unlocked 3-year retention. The dedupe key must be 64 hex characters, because it becomes part of the object name.
 - **Adopt, never assume** (owner rule). If an object already exists under the name (an earlier attempt, or another capture of the same posting), it is adopted: `RecordStore.put_or_adopt`.
   - Its generation is read from storage.

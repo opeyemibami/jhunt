@@ -21,6 +21,10 @@ from jhunt.workflows.capture.text import html_to_text
 ACTION = "snapshot_job_description"
 # A job page bigger than this is not a job page.
 MAX_BYTES = 5_000_000
+# A job description has far more text than this. Less means the page builds
+# its content with JavaScript (Ashby, among others), and the HTML we fetched is
+# an empty shell: refuse it rather than keep a snapshot with nothing in it.
+MIN_TEXT_CHARS = 500
 _DEDUPE_KEY = re.compile(r"[0-9a-f]{64}")
 
 
@@ -41,6 +45,9 @@ def snapshot_posting_tool(
         if not _DEDUPE_KEY.fullmatch(key):
             raise ValueError(f"not a dedupe_key: {key!r}")
         html = _fetch(http, url, max_bytes)
+        chars = len(html_to_text(html))
+        if chars < MIN_TEXT_CHARS:
+            raise FetchFailed(f"page looks JavaScript-rendered: {chars} chars of text")
 
         folder = f"{prefix}{key}/"
         html_record, kept_html = store.put_or_adopt(f"{folder}page.html", html, "text/html")

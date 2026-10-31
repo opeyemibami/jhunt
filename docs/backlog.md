@@ -7,7 +7,7 @@ Deferred work that has a target week. One line per item, with where it came from
 For now this replaces design.md's build order: a usable job-search tool first.
 
 1. Capture (PR 2.5) and capture-once (PR 2.6).
-2. Scout, minimal: readers for the Greenhouse and Ashby sources in docs/sources.md, a location filter (Ireland or remote-EU), a simple fit score against the owner's target roles, and a daily digest page. No email sending.
+2. Scout, minimal: readers for the Greenhouse and Ashby sources in docs/sources.md, a location filter (Ireland or remote-EU), a simple fit score against the owner's target roles, and a daily digest page. No email sending. Capturing a Scout posting snapshots the description from the board API (Greenhouse `content`, Ashby `descriptionHtml`) plus the URL, not a page fetch. A manual `jhunt-capture` of a URL keeps the page fetch with the 500-character guard. (Owner, PR 2.5 review)
 3. Submission recording: the owner confirms what was sent; it is locked as the submission.
 4. Fact bank and application pack drafts: tailored CV lines and a cover note. Every claim cites fact ids, and unsupported claims are blocked (`test_fact_bank.py`).
 

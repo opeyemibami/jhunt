@@ -20,7 +20,13 @@ from jhunt.workflows.capture.record import record_capture
 from tests.runtime.lease_watch import LeaseWatch
 from tests.workflows.capture.conftest import Site
 
-PAGE = b"<html><body><h1>Platform Engineer</h1><p>Dublin, Ireland</p></body></html>"
+ABOUT = (
+    "Join the platform team to run durable workflows in production. You will own the job "
+    "queue, the storage layer and the guarantees around them, with a lot of autonomy. "
+) * 4
+PAGE = (
+    f"<html><body><h1>Platform Engineer</h1><p>Dublin, Ireland</p><p>{ABOUT}</p></body></html>"
+).encode()
 
 
 @pytest.fixture
@@ -102,7 +108,7 @@ def test_capture_keeps_the_page_and_opens_the_application(
     text_key = snap["text_uri"].split("/", 3)[3]
     assert store.get(html_key, snap["html_generation"], snap["html_sha256"]) == PAGE
     assert store.get(text_key, snap["text_generation"], snap["text_sha256"]) == (
-        b"Platform Engineer\nDublin, Ireland"
+        f"Platform Engineer\nDublin, Ireland\n{ABOUT.strip()}".encode()
     )
     with engine.connect() as conn:
         status = conn.execute(
