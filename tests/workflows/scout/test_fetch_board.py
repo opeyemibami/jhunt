@@ -13,11 +13,6 @@ from tests.runtime.local_site import Site
 BOARD = {"jobs": [{"id": 1}, {"id": 2}]}
 
 
-@pytest.fixture
-def staging(gcs_test_bucket: str) -> StagingStore:
-    return StagingStore(gcs_test_bucket)
-
-
 def tool_for(site: Site, staging: StagingStore, prefix: str):  # type: ignore[no-untyped-def]
     apis = {"greenhouse": site.base, "ashby": site.base, "lever": site.base}
     return fetch_board_tool(staging, httpx.Client(timeout=10), prefix=prefix, apis=apis)
@@ -64,6 +59,14 @@ def test_a_response_without_jobs_fails(
         tool_for(site, staging, record_prefix).run(
             {"provider": "ashby", "board": "odd", "day": "2026-11-01"}
         )
+
+
+def test_a_board_that_cannot_be_reached_fails(staging: StagingStore, record_prefix: str) -> None:
+    # Port 9 (discard) is closed locally: the connection is refused.
+    apis = {"greenhouse": "http://127.0.0.1:9", "ashby": "http://127.0.0.1:9"}
+    tool = fetch_board_tool(staging, httpx.Client(timeout=5), prefix=record_prefix, apis=apis)
+    with pytest.raises(BoardFetchFailed, match="could not be reached"):
+        tool.run({"provider": "ashby", "board": "acme", "day": "2026-11-01"})
 
 
 @pytest.mark.parametrize(

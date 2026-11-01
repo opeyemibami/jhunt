@@ -61,6 +61,13 @@ def fetch_board_tool(
 
 
 def _get(http: httpx.Client, url: str) -> bytes:
+    try:
+        return _read(http, url)
+    except httpx.HTTPError as exc:  # refused, timed out, reset: one board, not the run
+        raise BoardFetchFailed(f"GET {url}: could not be reached ({exc})") from None
+
+
+def _read(http: httpx.Client, url: str) -> bytes:
     with http.stream("GET", url, follow_redirects=True) as response:
         if response.status_code == 404:
             raise BoardFetchFailed(f"GET {url}: board not found")

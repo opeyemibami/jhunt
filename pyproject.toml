@@ -19,6 +19,7 @@ dependencies = [
 jhunt-worker = "jhunt.app.worker:main"
 jhunt-records-delete = "jhunt.app.records_delete:main"
 jhunt-capture = "jhunt.app.capture:main"
+jhunt-scout = "jhunt.app.scout:main"
 jhunt-applications-delete = "jhunt.app.applications_delete:main"
 jhunt-api = "jhunt.api.main:main"
 

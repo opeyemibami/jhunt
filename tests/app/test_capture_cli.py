@@ -21,6 +21,7 @@ def scratch_env(
     # database and the CI bucket, never the dev database or real records.
     monkeypatch.setenv("POSTGRES_DB", str(migrated_db_url.database))
     monkeypatch.setenv("GCS_RECORDS_BUCKET", gcs_test_bucket)
+    monkeypatch.setenv("GCS_STAGING_BUCKET", gcs_test_bucket)
     capture_cli.get_settings.cache_clear()
     yield migrated_db_url
     capture_cli.get_settings.cache_clear()
