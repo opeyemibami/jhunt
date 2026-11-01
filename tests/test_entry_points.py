@@ -23,9 +23,12 @@ def test_worker_starts_and_stops_cleanly_on_sigterm(gcs_test_bucket: str) -> Non
     path = shutil.which("jhunt-worker")
     assert path is not None, "jhunt-worker is not installed; run `uv sync`"
 
-    # The worker wires Capture to a records bucket at startup: in tests that is
-    # always the CI bucket, never the real records bucket.
-    env = os.environ | {"GCS_RECORDS_BUCKET": gcs_test_bucket}
+    # The worker wires Capture and Scout to the records and staging buckets at
+    # startup: in tests both are the CI bucket, never the real ones.
+    env = os.environ | {
+        "GCS_RECORDS_BUCKET": gcs_test_bucket,
+        "GCS_STAGING_BUCKET": gcs_test_bucket,
+    }
     proc = subprocess.Popen([path], stderr=subprocess.PIPE, text=True, env=env)
     started = threading.Event()
 

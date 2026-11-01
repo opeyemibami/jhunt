@@ -15,8 +15,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
-- **3.1** postings and board readers;
-- **3.2** the Scout workflow, the fit score and `jhunt-scout`;
+- **3.2** the Scout workflow, the fit score and `jhunt-scout`, in two parts: **3.2a** the workflow, `jhunt-scout` and the 30-day cleanup; **3.2b** the fit score, once the owner approves `config/targets.toml` (owner, 2026-11-01);
 - **3.3** the digest page;
 - **3.4** submission recording;
 - **3.5** the fact bank;
