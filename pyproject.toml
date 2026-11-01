@@ -5,6 +5,7 @@ description = "Job-search assistant on a reusable AI workflow platform"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic==1.20.0",
+    "fastapi==0.162.0",
     "google-cloud-storage==3.17.1",
     "httpx==0.28.1",
     "langgraph==1.2.15",
@@ -13,6 +14,7 @@ dependencies = [
     "psycopg[binary]==3.3.6",
     "pydantic-settings==2.16.0",
     "sqlalchemy==2.1.4",
+    "uvicorn==0.54.0",
 ]
 
 [project.scripts]
@@ -21,7 +23,7 @@ jhunt-records-delete = "jhunt.app.records_delete:main"
 jhunt-capture = "jhunt.app.capture:main"
 jhunt-scout = "jhunt.app.scout:main"
 jhunt-applications-delete = "jhunt.app.applications_delete:main"
-jhunt-api = "jhunt.api.main:main"
+jhunt-api = "jhunt.app.web:main"
 
 [build-system]
 requires = ["uv_build==0.13.1"]

@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # model_routes.toml. For local experiments only.
     model_routes: str | None = None
 
+    # The digest page's port (jhunt-api). It always listens on 127.0.0.1.
+    jhunt_api_port: int = 8000
+
     # Google Cloud (ADR 0002). Required by the code that uses storage, which
     # fails with a clear message if one is missing; the database-only commands
     # (migrations, the worker loop) don't need them.

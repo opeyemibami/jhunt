@@ -3,21 +3,59 @@
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 
+import httpx
 import pytest
 from sqlalchemy import URL, create_engine, pool, text
 
 
-def test_api_is_a_not_implemented_stub() -> None:
+def test_api_serves_the_digest_on_127_0_0_1_only(
+    gcs_test_bucket: str, migrated_db_url: URL
+) -> None:
     path = shutil.which("jhunt-api")
     assert path is not None, "jhunt-api is not installed; run `uv sync`"
+    with socket.socket() as probe:  # a free port for this test
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = os.environ | {
+        "POSTGRES_DB": str(migrated_db_url.database),
+        "GCS_RECORDS_BUCKET": gcs_test_bucket,
+        "GCS_STAGING_BUCKET": gcs_test_bucket,
+        "JHUNT_API_PORT": str(port),
+    }
+    proc = subprocess.Popen([path], stderr=subprocess.PIPE, text=True, env=env)
+    listening = threading.Event()
+    lines: list[str] = []
 
-    result = subprocess.run([path], capture_output=True, text=True, timeout=30)
+    def watch() -> None:
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            lines.append(line)
+            if "Uvicorn running on" in line:
+                listening.set()
 
-    assert result.returncode == 1
-    assert result.stderr.strip() == "jhunt-api: not implemented"
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    try:
+        if not listening.wait(timeout=30):
+            pytest.fail("jhunt-api did not start: " + "".join(lines))
+        assert f"Uvicorn running on http://127.0.0.1:{port}" in "".join(lines)
+        response = httpx.get(f"http://127.0.0.1:{port}/", timeout=10)
+        assert response.status_code == 200
+        assert "<h1>Scout digest</h1>" in response.text
+        proc.send_signal(signal.SIGTERM)
+        # uvicorn shuts down cleanly, then re-raises the signal: the exit
+        # status is SIGTERM's, and the log says it finished.
+        assert proc.wait(timeout=30) == -signal.SIGTERM
+        watcher.join(timeout=5)
+        assert "Finished server process" in "".join(lines)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def test_worker_starts_and_stops_cleanly_on_sigterm(
