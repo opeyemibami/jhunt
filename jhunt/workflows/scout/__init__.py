@@ -1,11 +1,13 @@
 """Scout: read the job boards in config/sources.toml, keep their postings with
-a scope for a search in Ireland, and score them (ADR 0010). Public API for the
-composition root.
+a scope for a search in Ireland, and score them (ADRs 0010 and 0011). Public
+API for the composition root.
 """
 
 from jhunt.workflows.scout.fetch import BoardFetchFailed, fetch_board_tool
+from jhunt.workflows.scout.fit import Targets, TargetsError, fit_score, load_targets
 from jhunt.workflows.scout.graph import (
     VERSION,
+    VERSIONS,
     WORKFLOW,
     build,
     scout_input,
@@ -20,6 +22,7 @@ from jhunt.workflows.scout.store import store_postings_tool
 
 __all__ = [
     "VERSION",
+    "VERSIONS",
     "WORKFLOW",
     "BoardFetchFailed",
     "Posting",
@@ -27,10 +30,14 @@ __all__ = [
     "ScopeError",
     "Source",
     "SourcesError",
+    "Targets",
+    "TargetsError",
     "build",
     "fetch_board_tool",
+    "fit_score",
     "load_scope",
     "load_sources",
+    "load_targets",
     "parse_board",
     "scout_input",
     "store_postings_tool",

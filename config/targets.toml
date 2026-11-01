@@ -1,0 +1,40 @@
+# Scout's fit score (ADR 0011), approved by the owner on 2026-11-01.
+# Deterministic, no model. Matching ignores case and needs whole words
+# ("ml" doesn't match "html"). Every posting is scored, in scope or not.
+#
+#   0 if an [exclude] keyword is in the title; otherwise
+#   [title] weight if a phrase is in the title
+#   + [include] weight per keyword in the title or description, up to max
+#   - [penalty] weight if a keyword is in the title
+#   clamped to 0.0..1.0.
+
+[title]
+weight = 0.6
+phrases = [
+  "forward deployed", "solutions engineer", "applied ai", "ai engineer",
+  "machine learning engineer", "ml engineer", "llm", "agent", "agentic",
+  "platform engineer", "ml platform", "ai platform", "mlops", "llmops",
+  "inference", "ml infrastructure", "ai infrastructure", "research engineer",
+  "applied scientist", "software engineer, ai", "software engineer, ml",
+]
+
+[include]
+weight = 0.08
+max = 0.4
+keywords = [
+  "llm", "agents", "agentic", "langgraph", "rag", "retrieval", "evals",
+  "evaluation", "inference", "serving", "vllm", "workflow", "orchestration",
+  "kubernetes", "gcp", "vertex", "python", "fastapi", "postgres", "mlops",
+  "multimodal", "computer vision", "pytorch", "customer-facing",
+]
+
+[exclude]
+keywords = [
+  "intern", "internship", "director", "head of", "vp", "vice president",
+  "manager", "sales", "account executive", "recruiter", "marketing",
+  "legal", "counsel", "finance", "accountant",
+]
+
+[penalty]
+weight = 0.3
+keywords = ["staff", "principal", "distinguished"]

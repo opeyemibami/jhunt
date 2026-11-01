@@ -5,6 +5,7 @@ not fatal; postings unseen for 30 days are removed unless captured (ADR 0011).""
 from typing import Any
 
 import httpx
+import pytest
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import Connection
@@ -26,6 +27,7 @@ from jhunt.workflows.scout.sources import Source
 from tests.runtime.lease_watch import LeaseWatch
 from tests.runtime.local_site import Site
 from tests.workflows.scout.fixtures import SOURCES, serve_boards
+from tests.workflows.scout.test_store_postings import TARGETS
 
 DAY = "2026-11-01"
 
@@ -51,7 +53,7 @@ def run_scout(
     """Queue and process one Scout run; return its run status and final state."""
     engine, info = db
     thread_id = scout.thread_id_for(DAY)
-    graph_input = scout.scout_input(DAY, sources, Scope(northern_ireland_in_scope=False))
+    graph_input = scout.scout_input(DAY, sources, Scope(northern_ireland_in_scope=False), TARGETS)
     run_id = enqueue_start(engine, registry, thread_id, scout.WORKFLOW, graph_input)
     run = queue.claim(engine)
     assert run is not None and run.id == run_id
@@ -80,13 +82,16 @@ def test_scout_stores_every_posting_and_lists_the_board_that_failed(
 
     with engine.connect() as conn:
         postings = conn.execute(
-            text("SELECT board, job_id, in_scope, scope_reason FROM postings ORDER BY job_id")
+            text(
+                "SELECT board, job_id, in_scope, scope_reason, fit_score FROM postings"
+                " ORDER BY job_id"
+            )
         ).all()
         calls = conn.execute(text("SELECT tool, step_key FROM tool_calls ORDER BY id")).all()
     assert [tuple(p) for p in postings] == [
-        ("acme", "101", True, "Dublin"),
-        ("acme", "102", False, "out: San Francisco, CA"),
-        ("beta", "ab12", True, "region EMEA"),
+        ("acme", "101", True, "Dublin", pytest.approx(0.68)),
+        ("acme", "102", False, "out: San Francisco, CA", 0.0),
+        ("beta", "ab12", True, "region EMEA", 0.0),
     ]
     assert [tuple(c) for c in calls] == [
         ("fetch_board", "greenhouse:acme"),
@@ -118,6 +123,8 @@ def posting(job_id: str) -> Posting:
         in_scope=True,
         scope_reason="Dublin",
         description_html="",
+        fit_score=None,
+        fit_matches=None,
     )
 
 

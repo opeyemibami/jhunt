@@ -16,7 +16,7 @@ def engine(migrated_db_url: URL) -> Iterator[Engine]:
     eng.dispose()
 
 
-def posting(job_id: str, title: str, in_scope: bool, reason: str) -> Posting:
+def posting(job_id: str, title: str, in_scope: bool, reason: str, score: float = 0.5) -> Posting:
     return Posting(
         dedupe_key=job_id * 8,
         provider="greenhouse",
@@ -30,6 +30,8 @@ def posting(job_id: str, title: str, in_scope: bool, reason: str) -> Posting:
         in_scope=in_scope,
         scope_reason=reason,
         description_html="<p>x</p>",
+        fit_score=score,
+        fit_matches={"title": ["engineer"]},
     )
 
 
@@ -50,10 +52,12 @@ def test_every_posting_is_stored_with_its_scope(engine: Engine) -> None:
         ("11", True, "Dublin"),
         ("22", False, "out: London"),
     ]
-    assert rows[0]["fit_score"] is None  # scored in PR 3.2
+    assert (rows[0]["fit_score"], rows[0]["fit_matches"]) == (0.5, {"title": ["engineer"]})
 
 
-def test_seen_again_updates_the_posting_and_keeps_when_it_was_first_seen(engine: Engine) -> None:
+def test_seen_again_updates_the_posting_and_its_score_and_keeps_when_it_was_first_seen(
+    engine: Engine,
+) -> None:
     upsert_postings(engine, [posting("11", "Engineer", True, "Dublin")])
     with engine.begin() as conn:
         conn.execute(
@@ -64,12 +68,12 @@ def test_seen_again_updates_the_posting_and_keeps_when_it_was_first_seen(engine:
             )
         )
 
-    counts = upsert_postings(engine, [posting("11", "Senior Engineer", True, "Dublin")])
+    counts = upsert_postings(engine, [posting("11", "Senior Engineer", True, "Dublin", 0.9)])
 
     assert counts == {"new": 0, "seen_again": 1}
     [row] = stored(engine)
     assert row["title"] == "Senior Engineer"
-    assert row["fit_score"] == pytest.approx(0.7)  # not touched by a refresh
+    assert row["fit_score"] == pytest.approx(0.9)  # rescored: the targets may have changed
     with engine.connect() as conn:
         ages = conn.execute(
             text(

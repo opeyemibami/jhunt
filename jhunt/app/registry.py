@@ -35,5 +35,6 @@ def build_registry(settings: Settings, engine: Engine) -> Registry:
 
     registry = Registry()
     registry.register(capture.WORKFLOW, capture.VERSION, capture.build(engine, gateway))
-    registry.register(scout.WORKFLOW, scout.VERSION, scout.build(engine, gateway))
+    for version in scout.VERSIONS:
+        registry.register(scout.WORKFLOW, version, scout.build(engine, gateway))
     return registry
