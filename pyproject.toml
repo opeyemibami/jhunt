@@ -87,11 +87,12 @@ source_modules = ["jhunt.platform"]
 forbidden_modules = ["jhunt.workflows", "jhunt.api"]
 
 [[tool.importlinter.contracts]]
-name = "app above api above workflows above platform"
+name = "app above api above workflows above jobs above platform"
 type = "layers"
 # jhunt.app is the composition root: it wires workflows into the runtime, so
-# nothing below it may import it.
-layers = ["jhunt.app", "jhunt.api", "jhunt.workflows", "jhunt.platform"]
+# nothing below it may import it. jhunt.jobs is job-board knowledge shared by
+# the workflows (ADR 0009): they may import it; it may not import them.
+layers = ["jhunt.app", "jhunt.api", "jhunt.workflows", "jhunt.jobs", "jhunt.platform"]
 
 [[tool.importlinter.contracts]]
 name = "workflows never import each other"
@@ -116,6 +117,7 @@ source_modules = [
     "jhunt.app",
     "jhunt.api",
     "jhunt.workflows",
+    "jhunt.jobs",
     "jhunt.platform.config",
     "jhunt.platform.runtime",
     "jhunt.platform.timers",

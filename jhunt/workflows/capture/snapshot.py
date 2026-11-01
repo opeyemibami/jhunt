@@ -15,9 +15,7 @@ from typing import Any
 
 import httpx
 
-from jhunt.platform.artifacts import RecordStore, StoredRecord
-from jhunt.platform.gateway import Tool
-from jhunt.workflows.capture.boards import (
+from jhunt.jobs.boards import (
     PUBLIC_APIS,
     BoardJob,
     JobDetails,
@@ -27,7 +25,9 @@ from jhunt.workflows.capture.boards import (
     embedded_job_id,
     job_description,
 )
-from jhunt.workflows.capture.text import html_to_text
+from jhunt.jobs.text import html_to_text
+from jhunt.platform.artifacts import RecordStore, StoredRecord
+from jhunt.platform.gateway import Tool
 
 ACTION = "snapshot_job_description"
 # A job page bigger than this is not a job page.

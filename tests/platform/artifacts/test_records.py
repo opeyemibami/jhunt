@@ -101,3 +101,15 @@ def test_existing_returns_the_live_record_or_none(store: RecordStore, record_pre
     put = store.put(f"{record_prefix}a.html", b"kept", "text/html")
     found = store.existing(f"{record_prefix}a.html")
     assert found == (put, b"kept")
+
+
+def test_staging_put_or_adopt_and_get(gcs_test_bucket: str, record_prefix: str) -> None:
+    from jhunt.platform.artifacts import StagingStore
+
+    staging = StagingStore(gcs_test_bucket)
+    first, data = staging.put_or_adopt(f"{record_prefix}board.json", b"[1]", "application/json")
+    again, kept = staging.put_or_adopt(f"{record_prefix}board.json", b"[2]", "application/json")
+    assert (again, kept, data) == (first, b"[1]", b"[1]")
+    assert staging.get(first.key, first.generation, first.sha256) == b"[1]"
+    blob = storage.Client().bucket(gcs_test_bucket).get_blob(first.key)
+    assert blob is not None and blob.retention.mode is None  # staging carries no retention

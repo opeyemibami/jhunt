@@ -57,6 +57,15 @@ class BoardJob:
     job_id: str
 
 
+def board_list_url(provider: str, board: str, apis: dict[str, str]) -> str:
+    """Where a board's whole job list is, with descriptions (Scout)."""
+    if provider == "greenhouse":
+        return f"{apis['greenhouse']}/v1/boards/{board}/jobs?content=true"
+    if provider == "ashby":
+        return f"{apis['ashby']}/posting-api/job-board/{board}"
+    raise ValueError(f"no job list for provider {provider!r}")
+
+
 def board_job(url: str) -> BoardJob | None:
     """The board and job id in a job link, or None if it isn't one."""
     parts = urlsplit(url.strip())

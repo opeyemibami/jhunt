@@ -1,0 +1,7 @@
+# Scout's location scope (ADR 0010). The rules are in
+# jhunt/workflows/scout/location.py; this file holds the owner's settings.
+
+# Northern Ireland (Belfast, Derry) is in the UK: a different work permit.
+# false: its postings are kept but out of scope, as "out: ... (UK)".
+# true: they are in scope, as "Northern Ireland".
+northern_ireland_in_scope = false

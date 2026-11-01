@@ -233,6 +233,7 @@ repo/
   jhunt/               # one Python package; a top-level platform/ would shadow the stdlib module (ADR 0001)
     platform/          # execution layer: never imports jhunt.workflows or jhunt.api
       runtime/ timers/ gateway/ memory/ models/ artifacts/ events/ observability/
+    jobs/              # job-board knowledge shared by the workflows (ADR 0009)
     workflows/         # one package per workflow; workflows never import each other
       scout/ capture/ application_pack/ workspace/ tracker/ prep/ funnel/
     api/               # FastAPI

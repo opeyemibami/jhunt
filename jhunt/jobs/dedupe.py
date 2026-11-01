@@ -11,7 +11,7 @@ import hashlib
 import unicodedata
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
-from jhunt.workflows.capture.boards import board_job_id
+from jhunt.jobs.boards import board_job_id
 
 # Query parameters that only say where a click came from. Parameters that
 # identify the job itself (gh_jid, id, ...) are kept.

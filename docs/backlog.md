@@ -25,7 +25,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 Decisions:
 
 - **Digest page:** FastAPI (`fastapi`, `uvicorn`), server-rendered, bound to 127.0.0.1 only while there is no login. Next.js and Google sign-in come later.
-- **Configuration:** sources in `config/sources.toml` (the 13 Greenhouse and Ashby boards from docs/sources.md) and targets in `config/targets.toml`, both in git. Facts stay in the owner's local file, imported with `jhunt-facts import`, never in git.
+- **Configuration:** sources in `config/sources.toml` (the 13 Greenhouse and Ashby boards from docs/sources.md), location settings in `config/scope.toml` (Northern Ireland in or out; owner, PR 3.1 review) and targets in `config/targets.toml`, all in git. Facts stay in the owner's local file, imported with `jhunt-facts import`, never in git.
 - **Board payloads** go to the staging bucket (30-day expiry), so tool results stay references (ADR 0008). Staging read and write are added to `jhunt.platform.artifacts`.
 - **Fit score** is deterministic in v1: title match plus include and exclude keywords from `config/targets.toml`. No model.
 - **Scout runs by hand:** the owner runs `jhunt-scout` each morning; no cron (WSL). The tick endpoint comes with timers.

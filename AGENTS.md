@@ -62,6 +62,7 @@ jhunt/             # the one Python namespace package (a top-level `platform` wo
     artifacts/     # object storage writes, sha256, retention
     events/        # append-only event log
     observability/ # OTel setup, Langfuse export
+  jobs/            # job-board knowledge shared by the workflows: job links and board APIs, posting keys, text from HTML (ADR 0009); never imports a workflow
   workflows/       # one package per workflow; depends on jhunt.platform only through its public API
     scout/ capture/ application_pack/ workspace/ tracker/ prep/ funnel/
   api/             # FastAPI service
