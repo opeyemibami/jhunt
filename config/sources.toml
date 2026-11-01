@@ -1,0 +1,69 @@
+# Job boards Scout reads through their public APIs (docs/sources.md; ADR 0010).
+# provider: "greenhouse" or "ashby". board: the board's slug in its API.
+# company: the name shown for its postings (Ashby's API doesn't give one).
+# Six of these had no Irish or remote roles on 2026-10-31; the owner kept them.
+
+[[sources]]
+provider = "greenhouse"
+board = "anthropic"
+company = "Anthropic"
+
+[[sources]]
+provider = "greenhouse"
+board = "intercom"
+company = "Intercom"
+
+[[sources]]
+provider = "greenhouse"
+board = "hubspotjobs"
+company = "HubSpot"
+
+[[sources]]
+provider = "ashby"
+board = "wayflyer"
+company = "Wayflyer"
+
+[[sources]]
+provider = "ashby"
+board = "Workhuman"
+company = "Workhuman"
+
+[[sources]]
+provider = "ashby"
+board = "mistral.ai"
+company = "Mistral AI"
+
+[[sources]]
+provider = "ashby"
+board = "cohere"
+company = "Cohere"
+
+[[sources]]
+provider = "ashby"
+board = "synthesia"
+company = "Synthesia"
+
+[[sources]]
+provider = "ashby"
+board = "DeepL"
+company = "DeepL"
+
+[[sources]]
+provider = "ashby"
+board = "wayve"
+company = "Wayve"
+
+[[sources]]
+provider = "ashby"
+board = "langchain"
+company = "LangChain"
+
+[[sources]]
+provider = "ashby"
+board = "temporal"
+company = "Temporal"
+
+[[sources]]
+provider = "ashby"
+board = "modal"
+company = "Modal"

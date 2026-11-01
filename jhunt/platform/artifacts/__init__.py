@@ -6,7 +6,8 @@ from jhunt.platform.artifacts.records import (
     RecordExists,
     RecordIntegrityError,
     RecordStore,
+    StagingStore,
     StoredRecord,
 )
 
-__all__ = ["RecordExists", "RecordIntegrityError", "RecordStore", "StoredRecord"]
+__all__ = ["RecordExists", "RecordIntegrityError", "RecordStore", "StagingStore", "StoredRecord"]

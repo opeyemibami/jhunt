@@ -42,7 +42,13 @@ class StoredRecord:
     size: int
 
 
-class RecordStore:
+class _Store:
+    """Create-only objects with a sha256, shared by RecordStore and StagingStore.
+
+    Not a public base: the two are deliberately separate types, so code that
+    needs records (with retention) can't be handed a staging store.
+    """
+
     def __init__(self, bucket_name: str, client: storage.Client | None = None) -> None:
         # The client uses Application Default Credentials: jhunt-app,
         # impersonated locally; Workload Identity in CI; never a key file.
@@ -50,12 +56,15 @@ class RecordStore:
         self._bucket = self._client.bucket(bucket_name)
 
     def put(self, key: str, data: bytes, content_type: str) -> StoredRecord:
-        """Write a new record. Raises RecordExists if the key is taken."""
+        raise NotImplementedError
+
+    def _create(self, key: str, data: bytes, content_type: str, *, retain: bool) -> StoredRecord:
         sha256 = hashlib.sha256(data).hexdigest()
         blob = self._bucket.blob(key)
         blob.metadata = {"sha256": sha256}
-        blob.retention.mode = RETENTION_MODE
-        blob.retention.retain_until_time = dt.datetime.now(dt.UTC) + RETENTION_PERIOD
+        if retain:
+            blob.retention.mode = RETENTION_MODE
+            blob.retention.retain_until_time = dt.datetime.now(dt.UTC) + RETENTION_PERIOD
         try:
             # if_generation_match=0: create only. The upload fails if any live
             # object has this name, so a record is never silently replaced.
@@ -120,3 +129,27 @@ class RecordStore:
                 f"expected {expected_sha256}"
             )
         return data
+
+
+class RecordStore(_Store):
+    """Records: never lost or altered (ADR 0002)."""
+
+    def put(self, key: str, data: bytes, content_type: str) -> StoredRecord:
+        """Write a new record. Raises RecordExists if the key is taken.
+
+        Always with the fixed Unlocked 3-year retention: there is no way to
+        ask for less, or for Locked mode.
+        """
+        return self._create(key, data, content_type, retain=True)
+
+
+class StagingStore(_Store):
+    """Scratch objects in the staging bucket, such as board payloads (ADR 0010).
+
+    Create-only and sha256-checked like records, but with no retention: the
+    staging bucket's 30-day lifecycle removes them.
+    """
+
+    def put(self, key: str, data: bytes, content_type: str) -> StoredRecord:
+        """Write a new object. Raises RecordExists if the key is taken."""
+        return self._create(key, data, content_type, retain=False)
