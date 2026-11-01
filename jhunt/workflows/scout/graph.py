@@ -1,7 +1,8 @@
 """The Scout graph, version 1: fetch -> store -> cleanup (ADR 0011).
 
-One thread per day, scout-<day>. Its input fixes the day, the sources and the
-scope settings, so a re-run after a crash reads the same boards the same way.
+One thread per day, scout-<day> (scout-<day>-2 and on for a retry). Its input
+fixes the day, the sources and the scope settings, so a re-run after a crash
+reads the same boards the same way.
 
 fetch:   the gateway runs fetch_board once per board (step "<provider>:<board>").
          A board that fails is listed in "failed"; the others go on.
@@ -45,9 +46,10 @@ class ScoutState(TypedDict, total=False):
     removed: int
 
 
-def thread_id_for(day: str) -> str:
-    """One Scout thread per day."""
-    return f"scout-{day}"
+def thread_id_for(day: str, attempt: int = 1) -> str:
+    """One Scout thread per day: scout-<day>. A retry after a failed run is
+    scout-<day>-2, then -3 (jhunt-scout --retry)."""
+    return f"scout-{day}" if attempt == 1 else f"scout-{day}-{attempt}"
 
 
 def scout_input(day: str, sources: list[Source], scope: Scope) -> ScoutState:

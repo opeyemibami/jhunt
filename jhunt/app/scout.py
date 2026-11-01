@@ -1,9 +1,10 @@
-"""`jhunt-scout [--wait]`: read today's job boards (ADR 0011).
+"""`jhunt-scout [--retry] [--wait]`: read today's job boards (ADR 0011).
 
 It queues one Scout run for today over the boards in sources.toml, with the
 settings in scope.toml; a running jhunt-worker does the work. With --wait it
 waits for the run and prints what it found. Scout runs once a day: asking
-again the same day says so.
+again the same day says so. Only if today's run failed does --retry start
+another (thread scout-<day>-2, -3 and so on).
 """
 
 import argparse
@@ -32,6 +33,7 @@ def today() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jhunt-scout", description=__doc__.split("\n")[0])
+    parser.add_argument("--retry", action="store_true", help="run again if today's run failed")
     parser.add_argument("--wait", action="store_true", help="wait for the run and print it")
     args = parser.parse_args()
 
@@ -45,18 +47,57 @@ def main() -> None:
     engine = create_engine(settings.database_url())
     registry = build_registry(settings, engine)
     day = today()
-    thread_id = scout.thread_id_for(day)
+    latest = _latest_today(engine, day)
+    if args.retry:
+        if latest is None:
+            print("nothing to retry: no Scout run today; run jhunt-scout")
+            return
+        thread_id, attempt, status = latest
+        if status != "failed":
+            state = "succeeded" if status == "succeeded" else f"is {status}"
+            print(f"not retrying: today's run {state} (thread {thread_id})")
+            return
+        thread_id = scout.thread_id_for(day, attempt + 1)
+    elif latest is not None:
+        thread_id, _, status = latest
+        if status == "failed":
+            print(f"today's run failed: thread {thread_id}; jhunt-scout --retry starts another")
+        else:
+            print(f"already ran today: thread {thread_id} ({status}); Scout runs once a day")
+        return
+    else:
+        thread_id = scout.thread_id_for(day)
     try:
         enqueue_start(
             engine, registry, thread_id, scout.WORKFLOW, scout.scout_input(day, sources, scope)
         )
-    except ThreadExists:
-        print(f"already ran today: thread {thread_id}; Scout runs once a day")
+    except ThreadExists:  # another jhunt-scout queued it just now
+        print(f"already queued: thread {thread_id}")
         return
     print(f"queued: thread {thread_id} ({len(sources)} boards)")
     if args.wait:
         conninfo = settings.database_url().set(drivername="postgresql")
         _wait(engine, conninfo.render_as_string(hide_password=False), registry, thread_id)
+
+
+def _latest_today(engine: Engine, day: str) -> tuple[str, int, str] | None:
+    """Today's latest Scout thread, its attempt number and its run's status."""
+    first = scout.thread_id_for(day)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT thread_id, status FROM runs"
+                " WHERE workflow = :w AND (thread_id = :first OR thread_id LIKE :retries)"
+                " ORDER BY id"
+            ),
+            {"w": scout.WORKFLOW, "first": first, "retries": f"{first}-%"},
+        ).all()
+    latest = None
+    for thread_id, status in rows:
+        attempt = 1 if thread_id == first else int(thread_id.removeprefix(f"{first}-"))
+        if latest is None or attempt >= latest[1]:
+            latest = (thread_id, attempt, status)
+    return latest
 
 
 def _wait(engine: Engine, conninfo: str, registry: Registry, thread_id: str) -> None:

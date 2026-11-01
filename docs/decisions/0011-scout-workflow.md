@@ -8,10 +8,11 @@ ADR 0010 covers Scout's sources, board lists, postings and scope. This ADR cover
 
 ## Decision
 
-**`jhunt-scout [--wait]`** queues one Scout run for today; a running `jhunt-worker` does the work, as for Capture.
+**`jhunt-scout [--retry] [--wait]`** queues one Scout run for today; a running `jhunt-worker` does the work, as for Capture.
 
 - **One thread per day**: `scout-<day>`, with the UTC date (Ireland's date for a morning run). Asking again the same day prints `already ran today` and queues nothing. That keeps one day's lists, keys and tool calls together.
 - **The thread's input fixes the day, the sources and the scope settings**, read from `sources.toml` and `scope.toml` when the command runs. A re-run after a crash reads the same boards the same way, even if the files changed in between. A bad file stops the command before anything is queued.
+- **`--retry`** (owner, PR 3.2a review) starts another run for today only if today's latest run **failed**. The new thread is `scout-<day>-2`, then `-3` and so on. It refuses when today's run succeeded or is still queued or running, and when there was no run today. Without `--retry`, a failed day says `today's run failed: …; jhunt-scout --retry starts another`. A retry uses the same day, so board lists already in staging are adopted, not fetched again.
 - **`--wait`** waits up to five minutes and prints the summary: boards, failures, new, seen again, in scope, removed.
 
 **The graph, version 1: `fetch → store → cleanup`.**
@@ -28,6 +29,6 @@ ADR 0010 covers Scout's sources, board lists, postings and scope. This ADR cover
 
 ## Consequences
 
-- If the whole run fails (database or storage down), that day's thread is spent: `jhunt-scout` says the run failed, and the next day's run reads the boards again. Retrying a failed run needs a runtime feature that doesn't exist yet. Postings aren't lost, since the next day refreshes them.
+- If the whole run fails (database or storage down), `jhunt-scout --retry` starts a new thread for the same day. The failed thread stays as it is, with its run's error. The runtime has no way to retry a failed run in place.
 - A board that fails every day keeps its postings until cleanup removes them 30 days after they were last seen.
 - The worker now needs `GCS_STAGING_BUCKET` as well as `GCS_RECORDS_BUCKET`.
