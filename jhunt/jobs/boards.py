@@ -66,6 +66,16 @@ def board_list_url(provider: str, board: str, apis: dict[str, str]) -> str:
     raise ValueError(f"no job list for provider {provider!r}")
 
 
+def board_job_url(provider: str, board: str, job_id: str) -> str:
+    """The board's own link for a job Scout found. board_job reads it back, so
+    Capture fetches the job from the API under the posting's key (ADR 0012)."""
+    if provider == "greenhouse":
+        return f"https://job-boards.greenhouse.io/{board}/jobs/{job_id}"
+    if provider == "ashby":
+        return f"https://jobs.ashbyhq.com/{board}/{job_id}"
+    raise ValueError(f"no job link for provider {provider!r}")
+
+
 def board_job(url: str) -> BoardJob | None:
     """The board and job id in a job link, or None if it isn't one."""
     parts = urlsplit(url.strip())

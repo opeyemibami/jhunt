@@ -16,7 +16,6 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
 - **3.2b** the fit score from `config/targets.toml`, and `jhunt-scout --rescore` for postings stored before scoring;
-- **3.3** the digest page. In-scope postings with a title match come first, sorted by fit score, with the matched phrases. The other in-scope postings follow under a collapsed "other in-scope jobs" section (owner, 2026-11-01). Out-of-scope postings are shown as a count;
 - **3.4** submission recording;
 - **3.5** the fact bank;
 - **3.6** application pack drafts with cited facts (`test_fact_bank.py`).
@@ -57,6 +56,8 @@ Decisions:
 - Gateway logs only ModelCallError; log unexpected adapter exceptions too, with the same fields and no text. (PR 4a review)
 
 ## Later
+
+- Digest: retry a failed capture from the page. The capture thread exists, so the page can only show the error (ADR 0012). Same limit as `jhunt-capture`. (PR 3.3)
 
 - Worker startup checks that every configured bucket (records, staging) exists, and fails fast. Today, looking up an object in a missing bucket finds nothing instead of raising, so a wrong bucket name shows up only later (found while testing `jhunt-scout --wait`). (Owner, PR 3.2b review)
 - `jhunt-scout --wait` prints "waiting for the worker…" every 15 seconds, so a long wait never looks like a hang. (Owner, PR 3.2b review)
