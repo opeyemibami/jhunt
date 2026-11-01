@@ -76,6 +76,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+# Any test or fixture running over 30 s dumps every thread's stack, so a hang
+# or a slow wait shows where it is (built into pytest; owner, 2026-11-01).
+faulthandler_timeout = 30
 markers = [
     "live: calls a real model provider; runs only with RUN_LIVE_MODEL_TESTS=1",
     "owner: needs the owner's gcloud login; runs only with RUN_OWNER_TESTS=1",
