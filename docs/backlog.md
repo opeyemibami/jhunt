@@ -15,8 +15,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
-- **3.2b** the fit score from `config/targets.toml`, and `jhunt-scout --rescore` for postings stored before scoring;
-- **3.5** the fact bank;
+- **3.5** the fact bank. `jhunt-facts import` must be safe to re-run: unchanged facts are skipped, and changed ones become new versions (owner, 2026-11-01);
 - **3.6** application pack drafts with cited facts (`test_fact_bank.py`).
 
 Decisions:
@@ -35,6 +34,7 @@ Decisions:
 
 - Tool gateway: add the side-effect assertion to `tests/guarantees/test_worker_crash.py` ("side effects once"): a side effect in the interrupted step runs once across the crash and the resume. (Week 1 plan review)
 - Sources move from docs/sources.md into a sources table that Scout reads, editable from a Sources page in the web app (add, pause, remove; adding checks the endpoint). docs/sources.md stays as the seed data and the record of terms checked. (docs/sources.md PR)
+- Facts page: add, edit and retire facts in the browser. An edit creates a new version and never overwrites; drafts keep citing the version they used. Only the owner writes facts; drafts may suggest a missing fact, which the owner adds. (Owner, 2026-11-01)
 - WSL isn't always on. Before Scout's daily 07:00 run, decide between keeping the PC awake and moving the worker to Cloud Run early. (PR 2 review)
 
 ## Weeks 9 to 10

@@ -56,6 +56,14 @@ In the same transaction as the submission:
 
 **6. The digest** shows "Captured: application N · Submitted <date> via <channel>" for a captured posting that has a submission. "Latest" means the latest `submitted_at`, then the latest recorded.
 
+**7. Guarantee** (owner, PR 3.4 review): "A submitted document is never lost or altered", now in AGENTS.md's and design.md's tables. The mechanism is the snapshots' one:
+- create-only records with per-object retention;
+- no delete for the app;
+- sha256 checked on read;
+- append-only `documents`, `submissions` and `submission_documents`.
+
+`tests/guarantees/test_submission_immutable.py` proves it.
+
 ## What this doesn't do
 
 - It doesn't send, submit or upload anything to an employer. Hard rule 4 is unchanged.
