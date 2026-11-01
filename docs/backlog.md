@@ -34,15 +34,6 @@ Decisions:
 - **The fact-bank validator** blocks claims with no citation, an unknown fact id, or a number not found in the cited facts. Blocked claims are listed, never reworded. Its ADR states the limit: it can't check that a claim's meaning matches its fact. That needs a judge or evals, which are deferred.
 - **Self-merge:** Claude may merge PRs that touch only docs, the Scout UI or the digest page, once CI is green. Runtime, gateway, storage, migrations and anything touching the fact bank wait for the owner's review.
 
-## Next (owner command)
-
-- `jhunt-applications-delete <id>`, owner only. It does in one transaction what the owner did by hand for the wrongly captured application 1:
-  - deletes the application's events, the application, its snapshot rows, its tool calls, the runs and `threads` row of its Capture thread, and that thread's LangGraph checkpoints (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`);
-  - then runs `jhunt-records-delete` for its snapshot prefix;
-  - prints everything it removed.
-
-  It runs as the table owner, disabling the append-only triggers for that one transaction (ADR 0007), and asks for the id to be typed back. (Owner bug report, 2026-10-31)
-
 ## Week 3
 
 - Tool gateway: add the side-effect assertion to `tests/guarantees/test_worker_crash.py` ("side effects once"): a side effect in the interrupted step runs once across the crash and the resume. (Week 1 plan review)

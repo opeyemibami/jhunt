@@ -24,12 +24,12 @@ class Untouchable:
 def run(monkeypatch: pytest.MonkeyPatch, *argv: str) -> None:
     monkeypatch.setattr(sys, "argv", ["jhunt-records-delete", *argv])
     monkeypatch.setenv("GCP_PROJECT", "test-project")
-    records_delete.get_settings.cache_clear()
+    records_delete.get_gcp_settings.cache_clear()
     monkeypatch.setattr(records_delete, "owner_client", lambda project: Untouchable())
     try:
         records_delete.main()
     finally:
-        records_delete.get_settings.cache_clear()
+        records_delete.get_gcp_settings.cache_clear()
 
 
 @pytest.mark.parametrize("prefix", ["", "/", "//", "snapshots", "snapshots/1"])
@@ -82,3 +82,21 @@ def test_confirmation_shows_how_many_generations_it_will_delete(
         "Delete 3 generations under gs://jhunt-ci-test/tests/x/? Type the prefix to confirm: "
     ]
     assert "gs://jhunt-ci-test/tests/x/a.html#2 (noncurrent)" in capsys.readouterr().out
+
+
+def test_records_delete_needs_only_gcp_project(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A storage-only command must not need the database variables.
+    for name in [
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "JHUNT_CONFIG_DIR",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(records_delete, "list_generations", lambda *a: [])
+    run(monkeypatch, "jhunt-ci-test", "tests/x/")
+    assert "nothing under gs://jhunt-ci-test/tests/x/" in capsys.readouterr().out

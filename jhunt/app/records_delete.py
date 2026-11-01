@@ -21,7 +21,7 @@ from jhunt.platform.artifacts.curator import (
     list_generations,
     owner_client,
 )
-from jhunt.platform.config import get_settings
+from jhunt.platform.config import get_gcp_settings
 
 
 def main() -> None:
@@ -38,9 +38,10 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(f"jhunt-records-delete: {exc}") from None
 
-    project = get_settings().gcp_project
-    if project is None:
-        raise SystemExit("jhunt-records-delete: set GCP_PROJECT")
+    try:
+        project = get_gcp_settings().gcp_project  # only GCP_PROJECT: no database needed
+    except ValueError:
+        raise SystemExit("jhunt-records-delete: set GCP_PROJECT") from None
     client = owner_client(project)
     generations = list_generations(args.bucket, args.prefix, client)
     if not generations:

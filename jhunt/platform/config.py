@@ -72,6 +72,20 @@ class Settings(BaseSettings):
         )
 
 
+class GcpSettings(BaseSettings):
+    """Only what a storage-only owner command needs (jhunt-records-delete), so a
+    missing database variable doesn't stop it."""
+
+    model_config = SettingsConfigDict(env_file=None, extra="ignore", frozen=True)
+
+    gcp_project: str
+
+
+@lru_cache(maxsize=1)
+def get_gcp_settings() -> GcpSettings:
+    return GcpSettings()  # type: ignore[call-arg]  # fields come from the environment
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Read the environment once per process. Missing variables raise here."""
