@@ -93,21 +93,72 @@ def test_fit_score(
 
 def test_repo_targets_are_the_approved_ones() -> None:
     targets = load_targets(REPO_CONFIG)
-    assert (targets.title_weight, len(targets.title_phrases)) == (0.6, 21)
+    assert (targets.title_weight, len(targets.title_phrases)) == (0.5, 21)
     assert (targets.include_weight, targets.include_max, len(targets.include_keywords)) == (
         0.08,
-        0.4,
+        0.5,
         24,
     )
-    assert len(targets.exclude_keywords) == 15
+    assert len(targets.exclude_keywords) == 18
     assert (targets.penalty_weight, targets.penalty_keywords) == (
         0.3,
-        ["staff", "principal", "distinguished"],
+        [
+            "staff engineer",
+            "staff software engineer",
+            "staff ml",
+            "staff machine learning",
+            "staff+",
+            "principal",
+            "distinguished",
+        ],
     )
-    assert fit_score("Forward Deployed Engineer", "", targets)[0] == pytest.approx(0.6)
-    assert fit_score("Account Executive, Startups", "LLM", targets) == (
-        0.0,
-        {"exclude": ["account executive"]},
+
+
+# The owner's tuning after the first real scores (2026-11-01), on the repo's own
+# targets.toml: "staff" alone is no longer a penalty, title matches no longer
+# tie at 1.0, and three more exclusions.
+@pytest.mark.parametrize(
+    ("title", "description", "score", "matches"),
+    [
+        ("Forward Deployed Engineer", "", 0.5, {"title": ["forward deployed"]}),
+        # "Member of Technical Staff" is a normal title (Cohere, Anthropic)
+        ("Member of Technical Staff", "", 0.0, {}),
+        (
+            "Member of Technical Staff, Inference",
+            "",
+            0.58,
+            {"title": ["inference"], "include": ["inference"]},
+        ),
+        # Staff as a level is still penalised
+        ("Staff Software Engineer, ML Platform", "", 0.2, {
+            "title": ["ml platform", "software engineer, ml"],
+            "penalty": ["staff software engineer"]}),
+        ("Staff ML Engineer", "", 0.2, {
+            "title": ["ml engineer"], "penalty": ["staff ml"]}),
+        ("Staff Machine Learning Engineer", "", 0.2, {
+            "title": ["machine learning engineer"], "penalty": ["staff machine learning"]}),
+        # "+" isn't whitespace, so only "staff+" matches; the penalty is once anyway
+        ("Staff+ Engineer, Agents", "", 0.28, {
+            "title": ["agent"], "include": ["agents"], "penalty": ["staff+"]}),
+        # A title match plus the most include keywords: 0.5 + 0.5, the only way to 1.0
+        ("ML Engineer", "LLM agents, RAG, evals, inference, serving, Python", 1.0, {
+            "title": ["ml engineer"],
+            "include": ["llm", "agents", "rag", "evals", "inference", "serving", "python"]}),
+        ("ML Engineer", "LLM agents and RAG in Python", 0.82, {
+            "title": ["ml engineer"], "include": ["llm", "agents", "rag", "python"]}),
+        # The three new exclusions
+        ("Business Development Representative, AI", "", 0.0, {
+            "exclude": ["business development", "representative"]}),
+        ("Customer Success Representative", "LLM", 0.0, {"exclude": ["representative"]}),
+        ("IT Support Engineer", "", 0.0, {"exclude": ["it support"]}),
+    ],
+)  # fmt: skip
+def test_the_repo_targets_score_these_titles(
+    title: str, description: str, score: float, matches: dict[str, list[str]]
+) -> None:
+    assert fit_score(title, description, load_targets(REPO_CONFIG)) == (
+        pytest.approx(score),
+        matches,
     )
 
 
