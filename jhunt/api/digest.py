@@ -2,7 +2,8 @@
 
 GET /  in-scope postings with a title match, by fit score, with what matched;
        the other in-scope postings under a collapsed "Other in-scope jobs";
-       a count of the out-of-scope ones, which are never listed.
+       a count of the out-of-scope ones, which are never listed. A captured
+       posting shows its application and its latest submission (ADR 0013).
 POST /postings/<id>/capture  queues a Capture run for that posting, read from
        its board's API, and returns to the page. A running jhunt-worker does it.
 
@@ -94,8 +95,13 @@ def _load(engine: Engine) -> dict[str, Any]:
         postings = conn.execute(
             text(
                 "SELECT p.id, p.dedupe_key, p.url, p.title, p.company, p.scope_reason,"
-                " p.fit_score, p.fit_matches, a.id AS application_id"
+                " p.fit_score, p.fit_matches, a.id AS application_id,"
+                " s.submitted_at, s.channel AS submitted_via"
                 " FROM postings p LEFT JOIN applications a ON a.dedupe_key = p.dedupe_key"
+                # The latest submission counts (ADR 0013).
+                " LEFT JOIN LATERAL (SELECT submitted_at, channel FROM submissions"
+                "  WHERE application_id = a.id ORDER BY submitted_at DESC, id DESC LIMIT 1) s"
+                " ON true"
                 " WHERE p.in_scope"
                 " ORDER BY p.fit_score DESC NULLS LAST, p.title, p.id"
             )
@@ -180,7 +186,11 @@ def _row(p: Any, run: Any) -> str:
 
 def _action(p: Any, run: Any) -> str:
     if p.application_id is not None:
-        return f"Captured: application {p.application_id}"
+        captured = f"Captured: application {p.application_id}"
+        if p.submitted_at is None:
+            return captured
+        submitted = f"Submitted {p.submitted_at:%Y-%m-%d} via {html.escape(p.submitted_via)}"
+        return f"{captured} · {submitted}"
     if run is None:
         return (
             f'<form method="post" action="/postings/{p.id}/capture">'

@@ -18,8 +18,16 @@ from jhunt.app import applications_delete as cmd
 from jhunt.platform.artifacts.curator import Generation
 from jhunt.workflows import capture
 from jhunt.workflows.capture.record import record_capture
+from jhunt.workflows.workspace.submission import (
+    SubmittedFile,
+    record_submission,
+    submission_thread_id,
+)
 
 TABLES = [
+    "submission_documents",
+    "submissions",
+    "documents",
     "events",
     "applications",
     "jd_snapshots",
@@ -39,8 +47,17 @@ def engine(migrated_db_url: URL) -> Iterator[Engine]:
     eng.dispose()
 
 
+# Per seeded application: Capture's rows, plus one submission (its event and
+# its upload's tool call are the second of each).
+EACH = dict.fromkeys(TABLES, 1) | {"events": 2, "tool_calls": 2}
+
+
+def submission_thread(application_id: int) -> str:
+    return submission_thread_id(application_id, ["1" * 64], "email", "2026-11-01T00:00:00+00:00")
+
+
 def seed(engine: Engine, n: int) -> int:
-    """A captured application with everything Capture leaves: rows in every table."""
+    """A captured and submitted application: rows in every table."""
     key = f"{n}" * 64
     thread = capture.thread_id_for(key)
     refs = {
@@ -93,6 +110,25 @@ def seed(engine: Engine, n: int) -> int:
             ),
             {"t": thread},
         )
+    # A recorded submission, and its upload's tool call on its own thread.
+    sub_thread = submission_thread(application_id)
+    cv_ref = {"uri": f"gs://bkt/submissions/{key}/{'1' * 64}/cv.pdf", "generation": 3,
+              "sha256": "1" * 64}  # fmt: skip
+    record_submission(
+        engine, submission_key=sub_thread, application_id=application_id, channel="email",
+        submitted_at="2026-11-01T00:00:00+00:00",
+        files=[SubmittedFile("cv", "cv.pdf", "application/pdf", 3, cv_ref)],
+    )  # fmt: skip
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO tool_calls (idempotency_key, thread_id, node, step_key, tool,"
+                " args_hash, level, outcome, result)"
+                " VALUES (:k, :t, 'store', 'cv', 'store_submission_file', 'h', 1, 'succeeded',"
+                " CAST(:r AS jsonb))"
+            ),
+            {"k": f"sub-key-{n}", "t": sub_thread, "r": json.dumps(cv_ref)},
+        )
     return application_id
 
 
@@ -110,9 +146,12 @@ def test_plan_names_everything_it_will_remove(engine: Engine) -> None:
     plan = cmd.plan(engine, target)
 
     assert plan is not None
-    assert (plan.bucket, plan.prefix) == ("bkt", f"snapshots/{'1' * 64}/")
-    assert plan.threads == [capture.thread_id_for("1" * 64)]
-    assert plan.rows == dict.fromkeys(TABLES, 1)
+    assert (plan.bucket, plan.prefixes) == (
+        "bkt",
+        [f"snapshots/{'1' * 64}/", f"submissions/{'1' * 64}/"],
+    )
+    assert plan.threads == [capture.thread_id_for("1" * 64), submission_thread(target)]
+    assert plan.rows == EACH
     assert cmd.plan(engine, 9999) is None
 
 
@@ -124,8 +163,8 @@ def test_delete_removes_exactly_one_application_in_one_transaction(engine: Engin
 
     removed = cmd.delete_rows(engine, plan)
 
-    assert removed == dict.fromkeys(TABLES, 1)
-    assert counts(engine) == dict.fromkeys(TABLES, 1)  # only the other application is left
+    assert removed == EACH
+    assert counts(engine) == EACH  # only the other application is left
     with engine.connect() as conn:
         left = conn.execute(text("SELECT dedupe_key FROM applications")).scalar_one()
     assert left == "2" * 64
@@ -143,6 +182,9 @@ def test_triggers_are_back_on_after_the_delete(engine: Engine) -> None:
         conn.execute(text("DELETE FROM events WHERE application_id = :a"), {"a": other})
     with pytest.raises(IntegrityError, match="refused"), engine.begin() as conn:
         conn.execute(text("DELETE FROM applications WHERE id = :a"), {"a": other})
+    for table in ("submission_documents", "submissions", "documents"):
+        with pytest.raises(IntegrityError, match="refused"), engine.begin() as conn:
+            conn.execute(text(f"DELETE FROM {table}"))
 
 
 def test_command_shows_everything_and_deletes_only_when_the_id_is_typed(
@@ -152,20 +194,25 @@ def test_command_shows_everything_and_deletes_only_when_the_id_is_typed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     target = seed(engine, 1)
-    generations = [
-        Generation(f"snapshots/{'1' * 64}/page.html", 1, True),
-        Generation(f"snapshots/{'1' * 64}/page.txt", 2, True),
-    ]
+    generations = {
+        f"snapshots/{'1' * 64}/": [
+            Generation(f"snapshots/{'1' * 64}/page.html", 1, True),
+            Generation(f"snapshots/{'1' * 64}/page.txt", 2, True),
+        ],
+        f"submissions/{'1' * 64}/": [
+            Generation(f"submissions/{'1' * 64}/{'1' * 64}/cv.pdf", 3, True),
+        ],
+    }
     deleted_records: list[tuple[str, str]] = []
     monkeypatch.setenv("POSTGRES_DB", str(migrated_db_url.database))
     monkeypatch.setenv("GCP_PROJECT", "test-project")
     cmd.get_settings.cache_clear()
     monkeypatch.setattr(cmd, "owner_client", lambda project: object())
-    monkeypatch.setattr(cmd, "list_generations", lambda bucket, prefix, client: generations)
+    monkeypatch.setattr(cmd, "list_generations", lambda bucket, prefix, client: generations[prefix])
 
     def fake_delete(bucket: str, prefix: str, client: Any) -> list[Generation]:
         deleted_records.append((bucket, prefix))
-        return generations
+        return generations[prefix]
 
     monkeypatch.setattr(cmd, "delete_all_generations", fake_delete)
     monkeypatch.setattr(sys, "argv", ["jhunt-applications-delete", str(target)])
@@ -176,8 +223,9 @@ def test_command_shows_everything_and_deletes_only_when_the_id_is_typed(
         cmd.main()
     out = capsys.readouterr().out
     assert f"application {target}" in out
-    assert "events: 1" in out and "checkpoint_writes: 1" in out
+    assert "events: 2" in out and "checkpoint_writes: 1" in out and "submissions: 1" in out
     assert f"gs://bkt/snapshots/{'1' * 64}/page.html#1" in out
+    assert f"gs://bkt/submissions/{'1' * 64}/{'1' * 64}/cv.pdf#3" in out
     assert counts(engine)["applications"] == 1 and deleted_records == []
 
     # Typing the id deletes the rows, then the records.
@@ -185,6 +233,10 @@ def test_command_shows_everything_and_deletes_only_when_the_id_is_typed(
     cmd.main()
     out = capsys.readouterr().out
     assert counts(engine) == dict.fromkeys(TABLES, 0)
-    assert deleted_records == [("bkt", f"snapshots/{'1' * 64}/")]
-    assert "deleted 2 record generations" in out
+    assert deleted_records == [
+        ("bkt", f"snapshots/{'1' * 64}/"),
+        ("bkt", f"submissions/{'1' * 64}/"),
+    ]
+    assert "deleted 2 record generations under gs://bkt/snapshots/" in out
+    assert "deleted 1 record generations under gs://bkt/submissions/" in out
     cmd.get_settings.cache_clear()

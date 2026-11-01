@@ -145,6 +145,7 @@ Each guarantee has a test in `tests/guarantees/`. These are acceptance criteria.
 | Guarantee | Test file |
 |---|---|
 | A captured job description is never lost or altered | `test_snapshot_immutable.py`: delete and overwrite fail; hash mismatch detected |
+| A submitted document is never lost or altered | `test_submission_immutable.py`: the file carries the records' retention; delete, overwrite, retention changes and holds fail; hash mismatch detected; documents, submissions and submission_documents refuse UPDATE, DELETE and TRUNCATE |
 | A posting is captured once | `test_capture_once.py`: two parallel captures make one application |
 | A forwarded email is processed once | `test_email_once.py`: same push delivered twice makes one event |
 | A stage update is never lost | `test_stage_update.py`: kill worker mid-update; one consistent stage after resume |

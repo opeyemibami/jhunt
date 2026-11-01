@@ -18,6 +18,7 @@ from jhunt.workflows import capture
 from jhunt.workflows.capture.record import record_capture
 from jhunt.workflows.scout.parse import Posting
 from jhunt.workflows.scout.postings import upsert_postings
+from jhunt.workflows.workspace.submission import SubmittedFile, record_submission
 
 PORT = 8765
 ORIGIN = f"http://127.0.0.1:{PORT}"
@@ -222,6 +223,30 @@ def test_a_captured_posting_links_its_application_instead_of_a_button(
     html = page(client)
     assert f"Captured: application {application_id}" in html
     assert "<button" not in html
+
+
+def test_a_submitted_application_shows_its_latest_submission(
+    engine: Engine, client: TestClient
+) -> None:
+    upsert_postings(engine, POSTINGS[:1])
+    refs = {
+        "html": {"uri": "gs://b/h", "generation": 1, "sha256": "aa"},
+        "text": {"uri": "gs://b/t", "generation": 2, "sha256": "bb"},
+    }
+    application_id, _ = record_capture(
+        engine, url=POSTINGS[0].url, company="Acme", title="ML Engineer",
+        dedupe_key=POSTINGS[0].dedupe_key, snapshot=refs,
+    )  # fmt: skip
+    cv = SubmittedFile("cv", "cv.pdf", "application/pdf", 3, {
+        "uri": "gs://b/c", "generation": 1, "sha256": "1" * 64})  # fmt: skip
+    for key, day, channel in (("k1", "2026-11-01", "email"), ("k2", "2026-11-03", "<site>")):
+        record_submission(
+            engine, submission_key=key, application_id=application_id, channel=channel,
+            submitted_at=f"{day}T09:00:00+00:00", files=[cv],
+        )  # fmt: skip
+    html = page(client)
+    assert f"Captured: application {application_id} · Submitted 2026-11-03 via &lt;site&gt;" in html
+    assert "2026-11-01" not in html
 
 
 def test_a_failed_capture_shows_its_error(engine: Engine, client: TestClient) -> None:

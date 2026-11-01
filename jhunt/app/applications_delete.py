@@ -1,10 +1,12 @@
 """`jhunt-applications-delete <id>`: delete one application and everything it left.
 
 Owner only: for an application that should never have been captured, or a
-privacy request. In one transaction it removes the application's events, the
-application, its snapshot row, and its Capture thread's tool calls, runs,
-threads row and checkpoints. Then it deletes the snapshot's records, every
-generation, as jhunt-records-delete does (ADR 0002).
+privacy request. In one transaction it removes the application's submissions,
+documents and their links (ADR 0013), its events, the application, its
+snapshot row, and its threads' tool calls, runs, threads rows and checkpoints
+(Capture's, and each submission's). Then it deletes the snapshot's and the
+submitted files' records, every generation, as jhunt-records-delete does
+(ADR 0002).
 
 The append-only triggers (ADR 0007) would refuse these deletes. They are
 switched off for exactly these tables inside the transaction and switched back
@@ -30,8 +32,11 @@ from jhunt.platform.artifacts.curator import (
 from jhunt.platform.config import get_settings
 from jhunt.workflows import capture
 
-# The triggers that refuse deletes, by table (migrations 0005 and 0006).
+# The triggers that refuse deletes, by table (migrations 0005, 0006 and 0009).
 _GUARDS = {
+    "submission_documents": "submission_documents_append_only",
+    "submissions": "submissions_append_only",
+    "documents": "documents_append_only",
     "events": "events_append_only",
     "applications": "applications_no_delete",
     "jd_snapshots": "jd_snapshots_append_only",
@@ -44,14 +49,21 @@ class Plan:
     application_id: int
     snapshot_id: int
     threads: list[str]
-    bucket: str  # where the snapshot's records are
-    prefix: str  # e.g. snapshots/<dedupe_key>/
+    bucket: str  # where the snapshot's and the submitted files' records are
+    prefixes: list[str]  # snapshots/<dedupe_key>/, and submissions/<dedupe_key>/ if any
     rows: dict[str, int]  # table -> rows that will be deleted
 
 
 # Each table's rows for the plan, as (table, WHERE clause). The order is the
-# delete order: events and the application before the snapshot they point at.
+# delete order: what points at the application first, then the application,
+# then the snapshot it points at.
 _SCOPE = [
+    (
+        "submission_documents",
+        "submission_id IN (SELECT id FROM submissions WHERE application_id = :application_id)",
+    ),
+    ("submissions", "application_id = :application_id"),
+    ("documents", "application_id = :application_id"),
     ("events", "application_id = :application_id"),
     ("applications", "id = :application_id"),
     ("jd_snapshots", "id = :snapshot_id"),
@@ -80,7 +92,29 @@ def plan(engine: Engine, application_id: int) -> Plan | None:
         # The Capture thread, plus the lifecycle and chat threads once they exist.
         threads = [capture.thread_id_for(found.dedupe_key)]
         threads += [t for t in (found.thread_id, found.chat_thread_id) if t]
+        # Each submission's thread (submission-<id>-<hash>, ADR 0013), found by
+        # its tool calls: an attempt that never got recorded has those too.
+        threads += conn.execute(
+            text(
+                "SELECT DISTINCT thread_id FROM tool_calls WHERE thread_id LIKE :pattern"
+                " ORDER BY thread_id"
+            ),
+            {"pattern": f"submission-{application_id}-%"},
+        ).scalars()
         bucket, prefix = _snapshot_folder(found.html_uri)
+        prefixes = [prefix]
+        document_uri = conn.execute(
+            text("SELECT uri FROM documents WHERE application_id = :a LIMIT 1"),
+            {"a": application_id},
+        ).scalar_one_or_none()
+        if document_uri is not None:
+            if not document_uri.startswith(f"gs://{bucket}/"):
+                raise SystemExit(
+                    f"jhunt-applications-delete: {document_uri} is not in gs://{bucket}"
+                )
+            submitted = f"submissions/{found.dedupe_key}/"
+            check_prefix(submitted)  # never a whole bucket
+            prefixes.append(submitted)
         params = {
             "application_id": application_id,
             "snapshot_id": found.snapshot_id,
@@ -94,7 +128,7 @@ def plan(engine: Engine, application_id: int) -> Plan | None:
             )
             for table, where in _SCOPE
         }
-    return Plan(application_id, found.snapshot_id, threads, bucket, prefix, rows)
+    return Plan(application_id, found.snapshot_id, threads, bucket, prefixes, rows)
 
 
 def delete_rows(engine: Engine, plan: Plan) -> dict[str, int]:
@@ -146,14 +180,14 @@ def main() -> None:
         raise SystemExit(f"jhunt-applications-delete: no application {args.application_id}")
 
     client = owner_client(settings.gcp_project)
-    generations = list_generations(found.bucket, found.prefix, client)
     print(f"application {found.application_id}, threads {', '.join(found.threads)}")
     for table, count in found.rows.items():
         print(f"  {table}: {count}")
-    print(f"  records under gs://{found.bucket}/{found.prefix}:")
-    for gen in generations:
-        state = "live" if gen.live else "noncurrent"
-        print(f"    gs://{found.bucket}/{gen.name}#{gen.generation} ({state})")
+    for prefix in found.prefixes:
+        print(f"  records under gs://{found.bucket}/{prefix}:")
+        for gen in list_generations(found.bucket, prefix, client):
+            state = "live" if gen.live else "noncurrent"
+            print(f"    gs://{found.bucket}/{gen.name}#{gen.generation} ({state})")
 
     typed = input("Type the application id to confirm: ")
     if typed.strip() != str(found.application_id):
@@ -163,5 +197,6 @@ def main() -> None:
     print("deleted rows: " + ", ".join(f"{t} {n}" for t, n in removed.items()))
     # The rows are gone; now the bytes. If this fails, the rows stay deleted and
     # jhunt-records-delete <bucket> <prefix> finishes the job.
-    deleted = delete_all_generations(found.bucket, found.prefix, client)
-    print(f"deleted {len(deleted)} record generations under gs://{found.bucket}/{found.prefix}")
+    for prefix in found.prefixes:
+        deleted = delete_all_generations(found.bucket, prefix, client)
+        print(f"deleted {len(deleted)} record generations under gs://{found.bucket}/{prefix}")
