@@ -194,7 +194,11 @@ def test_seeded_levels(engine: Engine) -> None:
     with engine.connect() as conn:
         result = conn.execute(text("SELECT action, level FROM autonomy_settings"))
         seeded = {r.action: r.level for r in result}
-    assert seeded == {"fetch_postings": 1, "snapshot_job_description": 1}
+    assert seeded == {
+        "fetch_postings": 1,
+        "snapshot_job_description": 1,
+        "record_submission": 1,  # migration 0009 (ADR 0013), approved by the owner
+    }
 
 
 @pytest.mark.parametrize(
