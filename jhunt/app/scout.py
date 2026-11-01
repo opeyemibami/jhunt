@@ -1,10 +1,14 @@
-"""`jhunt-scout [--retry] [--wait]`: read today's job boards (ADR 0011).
+"""`jhunt-scout [--retry | --rescore] [--wait]`: read today's job boards (ADR 0011).
 
 It queues one Scout run for today over the boards in sources.toml, with the
-settings in scope.toml; a running jhunt-worker does the work. With --wait it
+settings in scope.toml and the targets in targets.toml; a running jhunt-worker
+does the work. With --wait it
 waits for the run and prints what it found. Scout runs once a day: asking
 again the same day says so. Only if today's run failed does --retry start
-another (thread scout-<day>-2, -3 and so on).
+another (thread scout-<day>-2, -3 and so on). Only if today's run succeeded
+does --rescore start another, which scores today's board lists again from
+staging, without fetching: for postings stored before they were scored, or
+after targets.toml changes.
 """
 
 import argparse
@@ -33,7 +37,11 @@ def today() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jhunt-scout", description=__doc__.split("\n")[0])
-    parser.add_argument("--retry", action="store_true", help="run again if today's run failed")
+    again = parser.add_mutually_exclusive_group()
+    again.add_argument("--retry", action="store_true", help="run again if today's run failed")
+    again.add_argument(
+        "--rescore", action="store_true", help="score today's postings again after a success"
+    )
     parser.add_argument("--wait", action="store_true", help="wait for the run and print it")
     args = parser.parse_args()
 
@@ -41,7 +49,8 @@ def main() -> None:
     try:
         sources = scout.load_sources(settings.jhunt_config_dir)
         scope = scout.load_scope(settings.jhunt_config_dir)
-    except (scout.SourcesError, scout.ScopeError) as exc:
+        targets = scout.load_targets(settings.jhunt_config_dir)
+    except (scout.SourcesError, scout.ScopeError, scout.TargetsError) as exc:
         raise SystemExit(f"jhunt-scout: {exc}") from None
 
     engine = create_engine(settings.database_url())
@@ -58,6 +67,17 @@ def main() -> None:
             print(f"not retrying: today's run {state} (thread {thread_id})")
             return
         thread_id = scout.thread_id_for(day, attempt + 1)
+    elif args.rescore:
+        if latest is None:
+            print("nothing to rescore: no Scout run today; run jhunt-scout")
+            return
+        thread_id, attempt, status = latest
+        if status != "succeeded":
+            state = "failed" if status == "failed" else f"is {status}"
+            hint = "; use --retry" if status == "failed" else ""
+            print(f"not rescoring: today's run {state} (thread {thread_id}){hint}")
+            return
+        thread_id = scout.thread_id_for(day, attempt + 1)
     elif latest is not None:
         thread_id, _, status = latest
         if status == "failed":
@@ -69,7 +89,11 @@ def main() -> None:
         thread_id = scout.thread_id_for(day)
     try:
         enqueue_start(
-            engine, registry, thread_id, scout.WORKFLOW, scout.scout_input(day, sources, scope)
+            engine,
+            registry,
+            thread_id,
+            scout.WORKFLOW,
+            scout.scout_input(day, sources, scope, targets),
         )
     except ThreadExists:  # another jhunt-scout queued it just now
         print(f"already queued: thread {thread_id}")
@@ -110,7 +134,7 @@ def _wait(engine: Engine, conninfo: str, registry: Registry, thread_id: str) -> 
         if run.status == "failed":
             raise SystemExit(f"jhunt-scout: the run failed: {run.error}")
         if run.status == "succeeded":
-            builder = registry.get(scout.WORKFLOW, scout.VERSION)
+            builder = registry.get(scout.WORKFLOW, scout.VERSION)  # the version just queued
             assert builder is not None  # registered by build_registry
             with Connection.connect(conninfo, autocommit=True, row_factory=dict_row) as pg:
                 config: RunnableConfig = {"configurable": {"thread_id": thread_id}}

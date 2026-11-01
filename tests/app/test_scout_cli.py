@@ -51,6 +51,7 @@ def test_queues_todays_run_once_with_every_source(
     assert payload["day"] == "2026-11-01"
     assert len(payload["sources"]) == 13
     assert payload["northern_ireland_in_scope"] is False  # from config/scope.toml
+    assert payload["targets"]["penalty_keywords"] == ["staff", "principal", "distinguished"]
 
 
 def jhunt_scout(
@@ -120,6 +121,41 @@ def test_retry_counts_only_todays_threads(
     assert jhunt_scout(monkeypatch, capsys, "--retry") == (
         "nothing to retry: no Scout run today; run jhunt-scout"
     )
+
+
+def test_rescore_runs_again_only_after_a_success(
+    scratch_env: URL, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    day = "2026-11-01"
+    assert jhunt_scout(monkeypatch, capsys, "--rescore") == (
+        "nothing to rescore: no Scout run today; run jhunt-scout"
+    )
+    jhunt_scout(monkeypatch, capsys)
+    assert jhunt_scout(monkeypatch, capsys, "--rescore") == (
+        f"not rescoring: today's run is queued (thread scout-{day})"
+    )
+    close(scratch_env, f"scout-{day}", "failed")
+    assert jhunt_scout(monkeypatch, capsys, "--rescore") == (
+        f"not rescoring: today's run failed (thread scout-{day}); use --retry"
+    )
+    jhunt_scout(monkeypatch, capsys, "--retry")
+    close(scratch_env, f"scout-{day}-2", "succeeded")
+    # Same day: the board lists already in staging are scored again, not fetched.
+    assert jhunt_scout(monkeypatch, capsys, "--rescore") == (
+        f"queued: thread scout-{day}-3 (13 boards)"
+    )
+    close(scratch_env, f"scout-{day}-3", "succeeded")
+    assert jhunt_scout(monkeypatch, capsys, "--rescore") == (
+        f"queued: thread scout-{day}-4 (13 boards)"
+    )
+
+
+def test_retry_and_rescore_cannot_be_combined(
+    scratch_env: URL, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["jhunt-scout", "--retry", "--rescore"])
+    with pytest.raises(SystemExit):
+        scout_cli.main()
 
 
 def test_a_bad_config_stops_before_queueing(

@@ -1,12 +1,14 @@
-"""The Scout graph, version 1: fetch -> store -> cleanup (ADR 0011).
+"""The Scout graph: fetch -> store -> cleanup (ADR 0011).
 
 One thread per day, scout-<day> (scout-<day>-2 and on for a retry). Its input
-fixes the day, the sources and the scope settings, so a re-run after a crash
-reads the same boards the same way.
+fixes the day, the sources, the scope settings and (from version 2) the fit
+score's targets, so a re-run after a crash reads and scores the same boards the
+same way.
 
 fetch:   the gateway runs fetch_board once per board (step "<provider>:<board>").
          A board that fails is listed in "failed"; the others go on.
-store:   the gateway runs store_postings once per fetched board.
+store:   the gateway runs store_postings once per fetched board, which stores
+         and scores its postings.
 cleanup: deletes postings unseen for 30 days, unless captured.
 
 All three are safe to re-run (AGENTS.md): the first two through the gateway,
@@ -25,11 +27,16 @@ from sqlalchemy import Engine, text
 
 from jhunt.platform.gateway import ToolGateway
 from jhunt.workflows.scout.fetch import BoardFetchFailed
+from jhunt.workflows.scout.fit import Targets
 from jhunt.workflows.scout.location import Scope
 from jhunt.workflows.scout.sources import Source
 
 WORKFLOW = "scout"
-VERSION = 1
+# Version 2 adds the targets to the input, so postings are scored. The graph
+# is the same: the store node passes the targets when the input has them, so
+# a version 1 thread still runs exactly as it did (hard rule 12).
+VERSIONS = (1, 2)
+VERSION = VERSIONS[-1]
 # Postings not seen on their board for this long are deleted, unless captured.
 UNSEEN_DAYS = 30
 
@@ -39,6 +46,7 @@ class ScoutState(TypedDict, total=False):
     day: str
     sources: list[dict[str, str]]
     northern_ireland_in_scope: bool
+    targets: dict[str, Any]  # version 2 on (Targets.as_input)
     # Filled in by the steps, keyed by "<provider>:<board>".
     fetched: dict[str, dict[str, Any]]
     failed: dict[str, str]
@@ -52,13 +60,14 @@ def thread_id_for(day: str, attempt: int = 1) -> str:
     return f"scout-{day}" if attempt == 1 else f"scout-{day}-{attempt}"
 
 
-def scout_input(day: str, sources: list[Source], scope: Scope) -> ScoutState:
+def scout_input(day: str, sources: list[Source], scope: Scope, targets: Targets) -> ScoutState:
     return {
         "day": day,
         "sources": [
             {"provider": s.provider, "board": s.board, "company": s.company} for s in sources
         ],
         "northern_ireland_in_scope": scope.northern_ireland_in_scope,
+        "targets": targets.as_input(),
     }
 
 
@@ -77,7 +86,8 @@ def summary(state: Mapping[str, Any]) -> list[str]:
 
 
 def build(engine: Engine, gateway: ToolGateway):  # type: ignore[no-untyped-def]
-    """A registry builder for Scout v1, wired to this engine and gateway."""
+    """A registry builder for Scout, wired to this engine and gateway. The
+    same builder serves every version in VERSIONS."""
 
     def fetch(state: ScoutState, config: RunnableConfig) -> ScoutState:
         fetched: dict[str, dict[str, Any]] = {}
@@ -111,6 +121,8 @@ def build(engine: Engine, gateway: ToolGateway):  # type: ignore[no-untyped-def]
                 "generation": ref["generation"],
                 "sha256": ref["sha256"],
             }
+            if "targets" in state:  # not in a version 1 thread
+                args["targets"] = state["targets"]
             stored[name] = gateway.call(
                 config["configurable"]["thread_id"],
                 "store",

@@ -1,7 +1,7 @@
 """A board's job list (from staging) parsed into postings (ADR 0010).
 
 Each posting gets the same key Capture uses (board_job_key), its scope from
-the location filter, and its description HTML for the fit score (PR 3.2).
+the location filter, and its description HTML for the fit score (fit.py).
 """
 
 import html
@@ -28,6 +28,9 @@ class Posting:
     in_scope: bool
     scope_reason: str
     description_html: str
+    # Set by store_postings (fit.py); None until scored.
+    fit_score: float | None = None
+    fit_matches: dict[str, list[str]] | None = None
 
 
 def parse_board(source: Source, payload: bytes, scope: Scope) -> list[Posting]:
