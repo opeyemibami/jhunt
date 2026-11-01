@@ -4,6 +4,7 @@ Good enough to read and search a snapshot; the HTML record keeps everything.
 A better extractor can come later as its own dependency decision.
 """
 
+import re
 from html.parser import HTMLParser
 
 # Content inside these is never text a reader sees.
@@ -37,9 +38,12 @@ class _Collector(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if not self._skipping:
-            # Newlines in the source are just whitespace in HTML; only block
-            # tags start a new line.
-            self.parts.append(" ".join(data.split()) if data.strip() else " ")
+            # Any run of whitespace in the source, newlines included, is one
+            # space in HTML; only block tags start a new line. Keep it at the
+            # edges too: "We <em>operate</em>" must not become "Weoperate".
+            # Where the source has no whitespace (We<span>operate</span>), none
+            # is added, as a browser wouldn't either.
+            self.parts.append(re.sub(r"\s+", " ", data))
 
 
 def html_to_text(html: bytes) -> str:

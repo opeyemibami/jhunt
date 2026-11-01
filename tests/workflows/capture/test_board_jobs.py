@@ -273,3 +273,34 @@ def test_a_page_naming_two_different_boards_is_refused(
         tool_for(site, store, http, record_prefix).run(
             {"url": site.url(f"careers?ashby_jid={ASHBY_JID}"), "dedupe_key": KEY}
         )
+
+
+# --- the board's own title and company ------------------------------------
+
+
+def test_a_board_job_keeps_its_title_and_company_and_a_retry_reads_them_back(
+    site: Site, store: RecordStore, http: httpx.Client, record_prefix: str
+) -> None:
+    api = {
+        "title": "Platform Engineer",
+        "company_name": "Acme Inc",
+        "content": html.escape(DESCRIPTION),
+    }
+    site.pages["v1/boards/acme/jobs/123?content=true"] = (200, json.dumps(api).encode())
+    tool = tool_for(site, store, http, record_prefix)
+    args = {"url": "https://job-boards.greenhouse.io/acme/jobs/123", "dedupe_key": KEY}
+
+    first = tool.run(args)
+    expected = {
+        "provider": "greenhouse",
+        "board": "acme",
+        "job_id": "123",
+        "title": "Platform Engineer",
+        "company": "Acme Inc",
+    }
+    assert first["job"] == expected
+
+    # A retry adopts the kept page without fetching, and still has the details.
+    site.hits.clear()
+    assert tool.run(args) == first
+    assert site.hits == []

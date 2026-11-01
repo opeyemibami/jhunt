@@ -1,4 +1,8 @@
-"""`jhunt-capture <url> --company C --title T [--wait]`: capture a posting.
+"""`jhunt-capture <url> [--company C --title T] [--wait]`: capture a posting.
+
+For Greenhouse, Ashby and Lever job links (direct or embedded) the board's own
+title and company are used and --company/--title are optional; any other link
+needs both (ADR 0007).
 
 It queues a Capture run; a running jhunt-worker does the work. With --wait it
 waits for the application and prints it. The same posting (by dedupe key) is
@@ -21,14 +25,19 @@ WAIT_SECONDS = 120
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jhunt-capture", description=__doc__.split("\n")[0])
     parser.add_argument("url")
-    parser.add_argument("--company", required=True)
-    parser.add_argument("--title", required=True)
+    # Optional for Greenhouse, Ashby and Lever job links (direct or embedded):
+    # the board's own title and company are used. Required for any other link.
+    parser.add_argument("--company")
+    parser.add_argument("--title")
     parser.add_argument("--wait", action="store_true", help="wait for the application")
     args = parser.parse_args()
 
     settings = get_settings()
     engine = create_engine(settings.database_url())
-    key = capture.dedupe_key(args.url, args.company, args.title)
+    try:
+        key = capture.capture_key(args.url, args.company, args.title)
+    except ValueError as exc:
+        raise SystemExit(f"jhunt-capture: {exc}") from None
 
     existing = _application(engine, key)
     if existing is not None:

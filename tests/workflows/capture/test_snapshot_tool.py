@@ -32,7 +32,8 @@ def test_stores_html_and_text_and_returns_only_references(
 
     result = tool.run({"url": site.url("job/1"), "dedupe_key": KEY})
 
-    assert set(result) == {"html", "text"}
+    assert set(result) == {"html", "text", "job"}
+    assert result["job"] is None  # a plain page: no board details
     assert set(result["html"]) == {"uri", "generation", "sha256"}  # references, no content
     assert result["html"]["uri"].endswith(f"{record_prefix}{KEY}/page.html")
     assert result["html"]["sha256"] == hashlib.sha256(PAGE).hexdigest()

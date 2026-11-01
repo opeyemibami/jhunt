@@ -59,3 +59,17 @@ def test_queues_once_then_says_queued_then_captured(
     )
     engine.dispose()
     assert run(monkeypatch, capsys) == f"already captured: application {application_id}"
+
+
+def test_board_links_need_no_company_or_title_and_other_links_do(
+    scratch_env: URL, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    board_url = "https://job-boards.greenhouse.io/acme/jobs/4012345"
+    monkeypatch.setattr(sys, "argv", ["jhunt-capture", board_url])
+    capture_cli.main()
+    key = capture.capture_key(board_url)
+    assert capsys.readouterr().out.strip() == f"queued: thread {capture.thread_id_for(key)}"
+
+    monkeypatch.setattr(sys, "argv", ["jhunt-capture", "https://acme.example/jobs/9"])
+    with pytest.raises(SystemExit, match="company and title are required"):
+        capture_cli.main()

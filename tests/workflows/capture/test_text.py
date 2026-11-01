@@ -21,3 +21,23 @@ def test_collapses_whitespace_and_blank_lines() -> None:
 
 def test_bad_bytes_do_not_fail() -> None:
     assert html_to_text(b"<p>caf\xe9</p>") == "caf�"
+
+
+def test_whitespace_in_the_source_is_kept_at_tag_boundaries() -> None:
+    # The Adaption bug: "We <em>operate</em>" came out as "Weoperate".
+    assert html_to_text(b"<p>We <em>operate</em> where <b>the</b> work is</p>") == (
+        "We operate where the work is"
+    )
+    assert html_to_text(b"<p>Deep expertise<span> in</span> Python, and<a> aren't</a></p>") == (
+        "Deep expertise in Python, and aren't"
+    )
+
+
+def test_no_space_is_invented_where_the_source_has_none() -> None:
+    # Browsers render <p>We<span>operate</span></p> as "Weoperate"; so do we.
+    assert html_to_text(b"<p>We<span>operate</span></p>") == "Weoperate"
+    assert html_to_text(b"<p>un<b>likely</b></p>") == "unlikely"
+
+
+def test_block_elements_still_start_new_lines() -> None:
+    assert html_to_text(b"<p>one</p><p>two<br>three</p><li>four</li>") == "one\ntwo\nthree\nfour"

@@ -34,7 +34,20 @@ design.md lists the fields but not how a snapshot's parts are stored, how "never
   - `id`, `dedupe_key`, `snapshot_id`, `company`, `role` and `opened_at` never change.
   - Thread ids may be set once, from null, and never move after that.
 
-**Dedupe key** (`jhunt/workflows/capture/dedupe.py`): the sha256 of three lines.
+**Dedupe key** (`jhunt/workflows/capture/dedupe.py`, `capture_key`). There are two kinds.
+
+**Board jobs** (Greenhouse, Ashby, Lever; direct or embedded links): `board_job_key(provider, job_id)`, the sha256 of `board-job`, the provider and the lower-cased job id (owner bug report, 2026-11-01).
+
+- **The bug.** Typing the company two ways gave one job two keys.
+- **Why not the board slug.** The owner asked for provider + board + job id. The board is left out deliberately:
+  - a job id is unique within its provider (Greenhouse ids are global numbers; Ashby and Lever ids are UUIDs);
+  - an embedded link names only the provider and job id. Its board is found by fetching the page, and the key is needed before the run is queued, which would mean an HTTP call outside the gateway.
+
+  So the key comes from the URL alone, and a direct and an embedded link to one job share it. Scout's postings use the same key.
+- **Company and title come from the board's API.** The board's title wins. The company comes from the API if the board names one (Greenhouse `company_name`; Ashby and Lever don't), then from `--company`, then from the board's slug. `--company` and `--title` are optional for board links.
+- **Applications captured before this change** keep their old keys, and records never change. A re-capture of the same job gets the new key, so it isn't recognised as a duplicate of an old application. Delete the old one with `jhunt-applications-delete` if needed.
+
+**Any other link:** the sha256 of three lines, and `--company` and `--title` are required.
 
 1. **The normalised URL**:
    - host in lower case, without `www.`, the scheme or a default port;
@@ -88,8 +101,12 @@ The rules are conservative on purpose. A missed duplicate costs a second applica
   - So the first stored page wins, and its hash is the one recorded.
 - **Text comes from the kept HTML.** It is extracted from the HTML that was kept, not from this fetch, so the two records always describe one page. Extraction uses the stdlib HTML parser:
   - scripts, styles, `noscript`, `template` and `svg` are dropped;
-  - block tags start a new line, and whitespace is collapsed;
+  - block tags start a new line;
+  - **whitespace in the source is kept at tag boundaries**, then collapsed (owner bug report, 2026-11-01). Before, it was stripped from each piece of text, so `We <em>operate</em>` became "Weoperate". Where the source has no whitespace (`We<span>operate</span>`), none is added, as a browser wouldn't add one either;
   - bytes are read as UTF-8, with replacement characters for anything else.
+
+  Existing snapshots keep the text they were stored with, because records never change. Only new captures use the fixed extractor.
+- **Board job details** are kept as a third record, `job.json` (provider, board, job id, title, company), written before `page.html`. A retry that adopts the kept page reads the title and company back from it, without fetching.
 
 **Recording.** `record_capture` first looks for the application by `dedupe_key`. If it exists, it writes nothing and returns `(id, already_captured=True)`. Otherwise it writes the snapshot row, the application and the event in one transaction. If another capture commits first, the unique `dedupe_key` rolls the whole transaction back, including the snapshot row, and the winner's id is returned. Snapshot rows can never be deleted, so a stray one would stay for good.
 

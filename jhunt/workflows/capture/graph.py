@@ -24,15 +24,31 @@ VERSION = 1
 
 
 class CaptureState(TypedDict, total=False):
-    # The input, set when the thread starts.
+    # The input, set when the thread starts. company and title may be None for
+    # a board job: the board's own values are used (ADR 0007).
     url: str
-    company: str
-    title: str
+    company: str | None
+    title: str | None
     dedupe_key: str
     # Filled in by the steps.
     snapshot: dict[str, Any]
     application_id: int
     already_captured: bool
+
+
+def names(state: CaptureState) -> tuple[str, str]:
+    """The company and title for the application.
+
+    For a board job, the board's own title wins, and its company if it names
+    one (Greenhouse does; Ashby and Lever don't). What the owner typed fills
+    the gaps, then the board's slug for the company.
+    """
+    job = state.get("snapshot", {}).get("job") or {}
+    company = job.get("company") or state.get("company") or job.get("board")
+    title = job.get("title") or state.get("title")
+    if not company or not title:
+        raise ValueError("no company or title: give --company and --title for this link")
+    return company, title
 
 
 def thread_id_for(dedupe_key: str) -> str:
@@ -55,11 +71,12 @@ def build(engine: Engine, gateway: ToolGateway):  # type: ignore[no-untyped-def]
         return {"snapshot": refs}
 
     def record(state: CaptureState) -> CaptureState:
+        company, title = names(state)
         application_id, already = record_capture(
             engine,
             url=state["url"],
-            company=state["company"],
-            title=state["title"],
+            company=company,
+            title=title,
             dedupe_key=state["dedupe_key"],
             snapshot=state["snapshot"],
         )

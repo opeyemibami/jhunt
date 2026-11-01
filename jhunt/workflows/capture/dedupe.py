@@ -11,6 +11,8 @@ import hashlib
 import unicodedata
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
+from jhunt.workflows.capture.boards import board_job_id
+
 # Query parameters that only say where a click came from. Parameters that
 # identify the job itself (gh_jid, id, ...) are kept.
 _TRACKING = {
@@ -54,3 +56,31 @@ def dedupe_key(url: str, company: str, title: str) -> str:
     """sha256 of the normalised URL, company and title, one per line."""
     joined = "\n".join([normalise_url(url), normalise_text(company), normalise_text(title)])
     return hashlib.sha256(joined.encode()).hexdigest()
+
+
+def board_job_key(provider: str, job_id: str) -> str:
+    """The key of a job on Greenhouse, Ashby or Lever: its provider and job id.
+
+    A job id is unique within its provider (Greenhouse ids are global numbers,
+    Ashby and Lever ids are UUIDs), so the board slug isn't needed, and an
+    embedded link, whose board is only found by fetching the page, gets the
+    same key as the direct link without any fetch (ADR 0007).
+    """
+    return hashlib.sha256("\n".join(["board-job", provider, job_id.lower()]).encode()).hexdigest()
+
+
+def capture_key(url: str, company: str | None = None, title: str | None = None) -> str:
+    """The dedupe key for capturing this link.
+
+    Board job links (direct or embedded): from the provider and job id only,
+    so however the company and title are typed, one job has one key. Any other
+    link: from the URL, company and title, which are then required.
+    """
+    found = board_job_id(url)
+    if found is not None:
+        return board_job_key(*found)
+    if not company or not title:
+        raise ValueError(
+            "company and title are required for links that aren't Greenhouse, Ashby or Lever jobs"
+        )
+    return dedupe_key(url, company, title)
