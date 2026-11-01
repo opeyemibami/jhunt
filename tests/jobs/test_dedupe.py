@@ -3,7 +3,7 @@ is captured once": normalised URL plus company and title)."""
 
 import pytest
 
-from jhunt.workflows.capture.dedupe import dedupe_key, normalise_text, normalise_url
+from jhunt.jobs.dedupe import dedupe_key, normalise_text, normalise_url
 
 
 @pytest.mark.parametrize(
@@ -56,7 +56,7 @@ def test_key_combines_url_company_and_title() -> None:
 
 # --- board jobs: the key comes from the provider and job id ------------------
 
-from jhunt.workflows.capture.dedupe import board_job_key, capture_key  # noqa: E402
+from jhunt.jobs.dedupe import board_job_key, capture_key  # noqa: E402
 
 GH_ID = "4012345"
 ASHBY_ID = "5635dd7e-a0ca-414d-b738-71500502dba9"

@@ -10,8 +10,8 @@ import httpx
 import pytest
 from google.cloud import storage
 
+from jhunt.jobs.boards import BoardJob, board_job, embedded_job_id
 from jhunt.platform.artifacts import RecordStore
-from jhunt.workflows.capture.boards import BoardJob, board_job, embedded_job_id
 from jhunt.workflows.capture.snapshot import FetchFailed, snapshot_posting_tool
 from tests.runtime.local_site import Site
 

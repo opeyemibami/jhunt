@@ -1,6 +1,6 @@
 """Plain text from a job page's HTML (stdlib parser; ADR 0007)."""
 
-from jhunt.workflows.capture.text import html_to_text
+from jhunt.jobs.text import html_to_text
 
 
 def test_keeps_the_words_and_drops_scripts_and_styles() -> None:

@@ -9,6 +9,7 @@ import httpx
 import pytest
 from sqlalchemy import URL, Engine, create_engine, pool, text
 
+from jhunt.jobs.dedupe import dedupe_key
 from jhunt.platform.artifacts import RecordStore
 from jhunt.platform.gateway import ToolGateway
 from jhunt.platform.runtime import queue
@@ -16,7 +17,6 @@ from jhunt.platform.runtime.registry import Registry
 from jhunt.platform.runtime.threads import enqueue_start
 from jhunt.platform.runtime.worker import process_run
 from jhunt.workflows import capture
-from jhunt.workflows.capture.dedupe import dedupe_key
 from jhunt.workflows.capture.record import record_capture
 from tests.runtime.lease_watch import LeaseWatch
 from tests.runtime.local_site import Site
