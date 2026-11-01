@@ -10,10 +10,19 @@ REPO_CONFIG = Path(__file__).resolve().parents[3] / "config"
 
 TARGETS = Targets(
     title_weight=0.6,
-    title_phrases=["ml engineer", "software engineer, ai", "platform engineer"],
+    title_phrases=["ml engineer", "software engineer, ai", "platform engineer", "agent"],
     include_weight=0.08,
     include_max=0.4,
-    include_keywords=["llm", "agents", "python", "kubernetes", "rag", "gcp", "computer vision"],
+    include_keywords=[
+        "llm",
+        "agents",
+        "python",
+        "kubernetes",
+        "rag",
+        "gcp",
+        "computer vision",
+        "eval",
+    ],
     exclude_keywords=["manager", "intern", "head of"],
     penalty_weight=0.3,
     penalty_keywords=["staff", "principal"],
@@ -63,8 +72,16 @@ TARGETS = Targets(
         ("Engineering Manager, ML Engineer team", "LLM", 0.0, {"exclude": ["manager"]}),
         ("Head of Platform Engineer hiring", "", 0.0, {"exclude": ["head of"]}),
         ("ML Engineer", "<p>Reports to a manager.</p>", 0.6, {"title": ["ml engineer"]}),
-        # Whole words only
+        # A trailing "s" matches too: plurals
+        # "agents" is also an include keyword, found in the title
+        ("AI Agents Engineer", "", 0.68, {"title": ["agent"], "include": ["agents"]}),
+        ("ML Engineers", "", 0.6, {"title": ["ml engineer"]}),
+        ("Data Engineer", "<p>Ship LLMs with evals.</p>", 0.16, {"include": ["llm", "eval"]}),
+        ("Interns Programme Coordinator", "", 0.0, {"exclude": ["intern"]}),
+        # Whole words only, plurals aside
         ("Internal Tools Engineer", "", 0.0, {}),  # not "intern"
+        ("International Partnerships Engineer", "", 0.0, {}),  # not "intern"
+        ("Agentic Systems Engineer", "", 0.0, {}),  # not "agent"
         ("HTML Engineer", "<p>Ragged edges, pythonic.</p>", 0.0, {}),  # not ml, rag, python
     ],
 )  # fmt: skip

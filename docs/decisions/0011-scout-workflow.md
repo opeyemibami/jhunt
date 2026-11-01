@@ -36,7 +36,10 @@ ADR 0010 covers Scout's sources, board lists, postings and scope. This ADR cover
 4. **Penalty**: minus `[penalty] weight` (0.3), once, if any penalty keyword is in the **title**. The posting is lowered, not hidden.
 5. **Clamp** to 0.0 to 1.0, rounded to four places.
 
-- **Matching** ignores case and needs whole words: no letter or digit on either side, and any whitespace between a phrase's words. So "ml" doesn't match "HTML", and "intern" doesn't match "Internal".
+- **Matching** ignores case and needs whole words: no letter or digit on either side, and any whitespace between a phrase's words.
+  - **A trailing "s" also matches** (owner, PR 3.2b review): "agent" matches "AI Agents Engineer", "llm" matches "LLMs", "eval" matches "evals", "ml engineer" matches "ML Engineers".
+  - **Not a plural, not a match**: "ml" doesn't match "HTML", "agent" doesn't match "Agentic", and "intern" doesn't match "Internal" or "International".
+  - Plurals in "-es" or "-ies" aren't covered.
 - **The description** is the board's HTML turned into text (`html_to_text`).
 - **What matched is stored with the score** in `postings.fit_matches` (migration 0008), as `{"title": [...], "include": [...], "penalty": [...], "exclude": [...]}` with empty lists left out. The digest shows it next to the score.
 - **A posting seen again is scored again**, so a change to `targets.toml` reaches it on the next run.
@@ -54,5 +57,5 @@ ADR 0010 covers Scout's sources, board lists, postings and scope. This ADR cover
 - If the whole run fails (database or storage down), `jhunt-scout --retry` starts a new thread for the same day. The failed thread stays as it is, with its run's error. The runtime has no way to retry a failed run in place.
 - A board that fails every day keeps its postings until cleanup removes them 30 days after they were last seen.
 - The worker now needs `GCS_STAGING_BUCKET` as well as `GCS_RECORDS_BUCKET`.
-- The score is keyword matching. A title like "Engineer, Agents Platform" doesn't match "agent", since "agents" is a different word; the owner's lists name both forms where both matter. A posting's score and its matches show what happened.
+- The score is keyword matching, so it has the limits of keywords: other word forms ("agentic" for "agent") count only if listed. A posting's score and its matches show what happened.
 - A posting no longer on any board keeps the score from its last run until cleanup removes it.

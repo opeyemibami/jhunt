@@ -58,6 +58,9 @@ Decisions:
 
 ## Later
 
+- Worker startup checks that every configured bucket (records, staging) exists, and fails fast. Today, looking up an object in a missing bucket finds nothing instead of raising, so a wrong bucket name shows up only later (found while testing `jhunt-scout --wait`). (Owner, PR 3.2b review)
+- `jhunt-scout --wait` prints "waiting for the worker…" every 15 seconds, so a long wait never looks like a hang. (Owner, PR 3.2b review)
+
 - Application lifecycle thread (design.md build order, weeks 1 to 2): a minimal lifecycle workflow that Capture starts, waiting at an interrupt for events; it gets real work with Tracker and timers. Deferred by the owner's priority order. (Week 2 plan review; owner, 2026-10-31)
 
 - Capture: PDF render of each snapshot (design.md, Capture: "PDF render"), in the separate Playwright render job container; fills `jd_snapshots.pdf_uri`. (Week 2 plan review)

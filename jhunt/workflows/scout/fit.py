@@ -8,8 +8,10 @@ Deterministic, no model, from <JHUNT_CONFIG_DIR>/targets.toml (in git):
     - penalty weight if a penalty keyword is in the title
     clamped to 0.0..1.0.
 
-Matching ignores case and needs whole words, so "ml" doesn't match "html" and
-"intern" doesn't match "internal". The matches are returned with the score, so
+Matching ignores case and needs whole words, with an optional trailing "s"
+for plurals: "agent" matches "Agents" and "llm" matches "LLMs", but "ml"
+doesn't match "html", "agent" doesn't match "agentic", and "intern" doesn't
+match "internal" or "international". The matches are returned with the score, so
 the digest can show why a posting scored what it did.
 """
 
@@ -105,7 +107,8 @@ def _found(phrases: list[str], text: str) -> list[str]:
 
 
 def _pattern(phrase: str) -> re.Pattern[str]:
-    # Whole words: no letter or digit on either side. Any run of whitespace
-    # between the phrase's words matches.
+    # Whole words: no letter or digit on either side, after an optional
+    # plural "s" (owner, PR 3.2b review). Any run of whitespace between the
+    # phrase's words matches.
     words = r"\s+".join(re.escape(w) for w in phrase.split())
-    return re.compile(rf"(?<![a-z0-9]){words}(?![a-z0-9])", re.I)
+    return re.compile(rf"(?<![a-z0-9]){words}s?(?![a-z0-9])", re.I)
