@@ -93,11 +93,27 @@ jobs:
       - name: alembic upgrade head
         run: uv run alembic upgrade head
 
+      - name: Make the results folder
+        run: mkdir -p test-results
+
       # Every test, tests/guarantees included, in parallel (pytest-xdist). Each
       # database test has its own scratch database and each storage test its
       # own prefix, so tests share no state. --durations lists the slowest.
+      # The JUnit XML and the full output are kept as an artifact, pass or
+      # fail, so an intermittent failure can be read after the fact.
       - name: pytest
-        run: uv run pytest -n auto --durations=25
+        run: |
+          set -o pipefail
+          uv run pytest -n auto --durations=25 --junitxml=test-results/junit.xml \
+            2>&1 | tee test-results/output.txt
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 30
 
   secret-scan:
     runs-on: ubuntu-24.04
