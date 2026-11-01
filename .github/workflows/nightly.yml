@@ -1,0 +1,111 @@
+# Nightly: the whole suite three times (twice at -n 2, once serially), to
+# catch intermittent failures. Every run's JUnit XML and full output are kept
+# as an artifact, pass or fail; a test over 30 s dumps every thread's stack
+# (faulthandler_timeout in pyproject.toml). Owner, 2026-11-01.
+#
+# The same setup, permissions and environment as ci.yml's tests job: no
+# repository secrets, and the CI bucket as jhunt-ci through Workload Identity
+# Federation. Actions are pinned by commit SHA; the comment gives the version.
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC daily, off the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  repeat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation: act as jhunt-ci, no key
+    env:
+      # As in ci.yml: dummy values for the throwaway CI database.
+      POSTGRES_USER: jhunt
+      POSTGRES_PASSWORD: ci-only-not-a-secret
+      POSTGRES_DB: jhunt
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      JHUNT_CONFIG_DIR: ./config
+      LANGGRAPH_STRICT_MSGPACK: "true"
+      LANGSMITH_TRACING: "false"
+      GCS_TEST_BUCKET: ${{ vars.GCS_TEST_BUCKET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version-file: pyproject.toml # [tool.uv] required-version
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Start Postgres (docker-compose.yml)
+        run: docker compose up -d --wait db
+
+      - name: uv sync
+        run: uv sync --locked
+
+      - name: alembic upgrade head
+        run: uv run alembic upgrade head
+
+      - name: Make the results folders
+        run: mkdir -p test-results/run-1-n2 test-results/run-2-n2 test-results/run-3-serial
+
+      # Each run goes on even if an earlier one failed; the last step fails
+      # the job if any did.
+      - name: pytest, run 1 (-n 2)
+        id: run1
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run pytest -n 2 --durations=25 --junitxml=test-results/run-1-n2/junit.xml \
+            2>&1 | tee test-results/run-1-n2/output.txt
+
+      - name: pytest, run 2 (-n 2)
+        id: run2
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run pytest -n 2 --durations=25 --junitxml=test-results/run-2-n2/junit.xml \
+            2>&1 | tee test-results/run-2-n2/output.txt
+
+      - name: pytest, run 3 (serial)
+        id: run3
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run pytest --durations=25 --junitxml=test-results/run-3-serial/junit.xml \
+            2>&1 | tee test-results/run-3-serial/output.txt
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly-test-results
+          path: test-results/
+          retention-days: 30
+
+      - name: Fail if any run failed
+        if: always()
+        run: |
+          echo "run 1 (-n 2): ${{ steps.run1.outcome }}"
+          echo "run 2 (-n 2): ${{ steps.run2.outcome }}"
+          echo "run 3 (serial): ${{ steps.run3.outcome }}"
+          test "${{ steps.run1.outcome }}" = success
+          test "${{ steps.run2.outcome }}" = success
+          test "${{ steps.run3.outcome }}" = success
