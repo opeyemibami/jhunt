@@ -15,7 +15,6 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
-- **3.5** the fact bank. `jhunt-facts import` must be safe to re-run: unchanged facts are skipped, and changed ones become new versions (owner, 2026-11-01);
 - **3.6** application pack drafts with cited facts (`test_fact_bank.py`).
 
 Decisions:
