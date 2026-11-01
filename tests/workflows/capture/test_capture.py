@@ -1,6 +1,7 @@
 """The Capture workflow end to end, in-process: a worker runs it, the snapshot
 is kept in records, and the application, snapshot row and event are recorded."""
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -134,3 +135,69 @@ def test_recording_twice_makes_one_application_and_one_snapshot(db: tuple[Engine
     assert len(rows(engine, "applications")) == 1
     assert len(rows(engine, "jd_snapshots")) == 1
     assert len(rows(engine, "events")) == 1
+
+
+@pytest.mark.parametrize(
+    ("url", "api_path", "body", "company"),
+    [
+        (  # Greenhouse names the company
+            "https://job-boards.greenhouse.io/acme/jobs/77",
+            "v1/boards/acme/jobs/77?content=true",
+            {"title": "Data Engineer", "company_name": "Acme Inc", "content": "CONTENT"},
+            "Acme Inc",
+        ),
+        (  # Ashby doesn't: the board's slug stands in
+            "https://jobs.ashbyhq.com/acme/0b1e8f0a-1c2d-4e5f-8a9b-0c1d2e3f4a5b",
+            "posting-api/job-board/acme",
+            {
+                "jobs": [
+                    {
+                        "id": "0b1e8f0a-1c2d-4e5f-8a9b-0c1d2e3f4a5b",
+                        "title": "Data Engineer",
+                        "descriptionHtml": "CONTENT",
+                    }
+                ]
+            },
+            "acme",
+        ),
+    ],
+)
+def test_a_board_job_is_captured_without_typing_company_or_title(
+    db: tuple[Engine, str],
+    site: Site,
+    store: RecordStore,
+    http: httpx.Client,
+    record_prefix: str,
+    lease_watch: LeaseWatch,
+    url: str,
+    api_path: str,
+    body: dict[str, Any],
+    company: str,
+) -> None:
+    engine, info = db
+    description = "<p>" + "Build data pipelines in Python and Postgres. " * 15 + "</p>"
+    site.pages[api_path] = (200, json.dumps(body).replace("CONTENT", description).encode())
+    gateway = ToolGateway(
+        engine,
+        [
+            capture.snapshot_posting_tool(
+                store,
+                http,
+                prefix=record_prefix,
+                apis={"greenhouse": site.base, "ashby": site.base, "lever": site.base},
+            )
+        ],
+    )
+    registry = Registry()
+    registry.register(capture.WORKFLOW, capture.VERSION, capture.build(engine, gateway))
+    key = capture.capture_key(url)  # no company or title typed
+    enqueue_start(
+        engine, registry, capture.thread_id_for(key), capture.WORKFLOW,
+        {"url": url, "company": None, "title": None, "dedupe_key": key},
+    )  # fmt: skip
+    run = queue.claim(engine)
+    assert run is not None
+    process_run(engine, info, registry, run, on_lease_lost=lease_watch)
+
+    [app] = rows(engine, "applications")
+    assert (app["company"], app["role"], app["dedupe_key"]) == (company, "Data Engineer", key)

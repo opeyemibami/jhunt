@@ -83,6 +83,22 @@ def embedded_job_id(url: str) -> tuple[str, str] | None:
     return None
 
 
+def board_job_id(url: str) -> tuple[str, str] | None:
+    """(provider, job id) for any board job link, direct or embedded, read
+    from the URL alone. The job id is lower-cased (Ashby and Lever ids are
+    UUIDs, which links may spell in either case)."""
+    job = board_job(url)
+    found = (job.kind, job.job_id) if job is not None else embedded_job_id(url)
+    return (found[0], found[1].lower()) if found is not None else None
+
+
+@dataclass(frozen=True)
+class JobDetails:
+    html: bytes  # the description
+    title: str | None
+    company: str | None  # Greenhouse names it; Ashby and Lever don't
+
+
 def embedded_board(kind: str, page: bytes) -> str | None:
     """The board name an embedding page uses, or None if it names none, or
     several different ones (then there's no telling which holds the job)."""
@@ -91,19 +107,24 @@ def embedded_board(kind: str, page: bytes) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
-def job_description(http: httpx.Client, job: BoardJob, apis: dict[str, str]) -> bytes:
-    """The job's description HTML, from the board's API. Raises JobNotFound."""
+def job_description(http: httpx.Client, job: BoardJob, apis: dict[str, str]) -> JobDetails:
+    """The job's description HTML, title and (where the board says) company,
+    from the board's API. Raises JobNotFound."""
     base = apis[job.kind]
+    company = None
     if job.kind == "greenhouse":
         data = _get_json(http, f"{base}/v1/boards/{job.board}/jobs/{job.job_id}?content=true")
         # Greenhouse returns the HTML entity-escaped ("&lt;p&gt;...").
         description = html.unescape(data.get("content") or "")
+        title, company = data.get("title"), data.get("company_name")
     elif job.kind == "ashby":
         board = _get_json(http, f"{base}/posting-api/job-board/{job.board}")
-        found = [j for j in board.get("jobs", []) if j.get("id") == job.job_id]
+        wanted = job.job_id.lower()
+        found = [j for j in board.get("jobs", []) if str(j.get("id", "")).lower() == wanted]
         if not found:
             raise JobNotFound(job.job_id)
         description = found[0].get("descriptionHtml") or ""
+        title = found[0].get("title")
     else:  # lever
         data = _get_json(http, f"{base}/v0/postings/{job.board}/{job.job_id}")
         # Lever splits a posting into a description, titled lists and a closing part.
@@ -112,9 +133,10 @@ def job_description(http: httpx.Client, job: BoardJob, apis: dict[str, str]) -> 
             for item in data.get("lists", [])
         )
         description = (data.get("description") or "") + lists + (data.get("additional") or "")
+        title = data.get("text")  # Lever calls the title "text"
     if not description.strip():
         raise JobNotFound(f"{job.job_id}: the board returned no description")
-    return description.encode()
+    return JobDetails(description.encode(), title, company)
 
 
 def _get_json(http: httpx.Client, url: str) -> dict[str, Any]:

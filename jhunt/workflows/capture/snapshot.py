@@ -9,6 +9,7 @@ and recording its result runs it again): both uploads are create-only under
 names derived from the dedupe key, and an object already there is adopted.
 """
 
+import json
 import re
 from typing import Any
 
@@ -19,6 +20,7 @@ from jhunt.platform.gateway import Tool
 from jhunt.workflows.capture.boards import (
     PUBLIC_APIS,
     BoardJob,
+    JobDetails,
     JobNotFound,
     board_job,
     embedded_board,
@@ -59,22 +61,38 @@ def snapshot_posting_tool(
         if kept is not None:
             # An earlier attempt kept this page (and crashed before the gateway
             # recorded the result): adopt it without fetching. A newer fetch
-            # might be different, or a JavaScript shell (ADR 0007).
+            # might be different, or a JavaScript shell (ADR 0007). Its job
+            # details, if it was a board job, were kept before the page.
             html_record, kept_html = kept
+            found = store.existing(f"{folder}job.json")
+            job = json.loads(found[1]) if found is not None else None
         else:
-            html = _job_html(http, url, max_bytes, apis)
+            html, details = _job_html(http, url, max_bytes, apis)
+            job = None
+            if details is not None:
+                # The board's own title and company, kept before the page so a
+                # retry that adopts the page still has them.
+                _, kept_job = store.put_or_adopt(
+                    f"{folder}job.json",
+                    json.dumps(details, sort_keys=True).encode(),
+                    "application/json",
+                )
+                job = json.loads(kept_job)
             html_record, kept_html = store.put_or_adopt(f"{folder}page.html", html, "text/html")
         # The text comes from the HTML that was kept, which may be an earlier
         # fetch than this one, so the two records always describe one page.
         text = html_to_text(kept_html).encode()
         text_record, _ = store.put_or_adopt(f"{folder}page.txt", text, "text/plain; charset=utf-8")
-        return {"html": _reference(html_record), "text": _reference(text_record)}
+        return {"html": _reference(html_record), "text": _reference(text_record), "job": job}
 
     return Tool("snapshot_posting", ACTION, run)
 
 
-def _job_html(http: httpx.Client, url: str, max_bytes: int, apis: dict[str, str]) -> bytes:
-    """The HTML to keep for a job link. Raises FetchFailed with the reason."""
+def _job_html(
+    http: httpx.Client, url: str, max_bytes: int, apis: dict[str, str]
+) -> tuple[bytes, dict[str, Any] | None]:
+    """The HTML to keep for a job link, and the board's details for a board job
+    (provider, board, job id, title, company). Raises FetchFailed with the reason."""
     job = board_job(url)
     embedded = embedded_job_id(url)
     if job is None and embedded is not None:
@@ -89,14 +107,21 @@ def _job_html(http: httpx.Client, url: str, max_bytes: int, apis: dict[str, str]
         # Greenhouse, Ashby and Lever: ask the board's API, never the page
         # (a closed job's page redirects to the board's list; boards.py).
         try:
-            return job_description(http, job, apis)
+            details: JobDetails = job_description(http, job, apis)
         except JobNotFound:
             raise FetchFailed("job not found") from None
+        return details.html, {
+            "provider": job.kind,
+            "board": job.board,
+            "job_id": job.job_id,
+            "title": details.title,
+            "company": details.company,
+        }
     html = _fetch(http, url, max_bytes)
     chars = len(html_to_text(html))
     if chars < MIN_TEXT_CHARS:
         raise FetchFailed(f"page looks JavaScript-rendered: {chars} chars of text")
-    return html
+    return html, None
 
 
 def _fetch(http: httpx.Client, url: str, max_bytes: int) -> bytes:
