@@ -16,7 +16,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
 - **3.2b** the fit score from `config/targets.toml`, and `jhunt-scout --rescore` for postings stored before scoring;
-- **3.3** the digest page: in-scope postings by fit score, with the matched phrases, and a count of hidden ones;
+- **3.3** the digest page. In-scope postings with a title match come first, sorted by fit score, with the matched phrases. The other in-scope postings follow under a collapsed "other in-scope jobs" section (owner, 2026-11-01). Out-of-scope postings are shown as a count;
 - **3.4** submission recording;
 - **3.5** the fact bank;
 - **3.6** application pack drafts with cited facts (`test_fact_bank.py`).
