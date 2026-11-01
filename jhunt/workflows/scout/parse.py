@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from jhunt.jobs.dedupe import board_job_key
-from jhunt.workflows.scout.location import classify_location
+from jhunt.workflows.scout.location import Scope, classify_location
 from jhunt.workflows.scout.sources import Source
 
 
@@ -30,18 +30,19 @@ class Posting:
     description_html: str
 
 
-def parse_board(source: Source, payload: bytes) -> list[Posting]:
+def parse_board(source: Source, payload: bytes, scope: Scope) -> list[Posting]:
     jobs: list[dict[str, Any]] = json.loads(payload).get("jobs", [])
     if source.provider == "greenhouse":
-        return [_greenhouse(source, job) for job in jobs]
+        return [_greenhouse(source, job, scope) for job in jobs]
     # Unlisted Ashby jobs are reachable only by direct link: not for Scout.
-    return [_ashby(source, job) for job in jobs if job.get("isListed", True)]
+    return [_ashby(source, job, scope) for job in jobs if job.get("isListed", True)]
 
 
-def _greenhouse(source: Source, job: dict[str, Any]) -> Posting:
+def _greenhouse(source: Source, job: dict[str, Any], scope: Scope) -> Posting:
     location = (job.get("location") or {}).get("name") or ""
     return _posting(
         source,
+        scope,
         job_id=str(job["id"]),
         url=job.get("absolute_url") or "",
         title=job.get("title") or "",
@@ -52,11 +53,12 @@ def _greenhouse(source: Source, job: dict[str, Any]) -> Posting:
     )
 
 
-def _ashby(source: Source, job: dict[str, Any]) -> Posting:
+def _ashby(source: Source, job: dict[str, Any], scope: Scope) -> Posting:
     places = [job.get("location") or ""]
     places += [s.get("location") or "" for s in job.get("secondaryLocations") or []]
     return _posting(
         source,
+        scope,
         job_id=str(job["id"]).lower(),
         url=job.get("jobUrl") or "",
         title=job.get("title") or "",
@@ -67,8 +69,10 @@ def _ashby(source: Source, job: dict[str, Any]) -> Posting:
     )
 
 
-def _posting(source: Source, *, job_id: str, location: str, remote: bool, **fields: Any) -> Posting:
-    in_scope, reason = classify_location(location, remote)
+def _posting(
+    source: Source, scope: Scope, *, job_id: str, location: str, remote: bool, **fields: Any
+) -> Posting:
+    in_scope, reason = classify_location(location, remote, scope)
     return Posting(
         dedupe_key=board_job_key(source.provider, job_id),
         provider=source.provider,

@@ -4,6 +4,7 @@ import html
 import json
 
 from jhunt.jobs.dedupe import board_job_key
+from jhunt.workflows.scout.location import Scope
 from jhunt.workflows.scout.parse import parse_board
 from jhunt.workflows.scout.sources import Source
 
@@ -53,9 +54,12 @@ ASHBY = {
 }
 
 
+SCOPE = Scope(northern_ireland_in_scope=False)
+
+
 def test_greenhouse_jobs() -> None:
     first, second = parse_board(
-        Source("greenhouse", "acme", "Acme"), json.dumps(GREENHOUSE).encode()
+        Source("greenhouse", "acme", "Acme"), json.dumps(GREENHOUSE).encode(), SCOPE
     )
     assert first.dedupe_key == board_job_key("greenhouse", "4012345")
     assert (first.job_id, first.title, first.company, first.location) == (
@@ -72,7 +76,7 @@ def test_greenhouse_jobs() -> None:
 
 def test_ashby_jobs_skip_unlisted_and_join_locations() -> None:
     research, solutions = parse_board(
-        Source("ashby", "adaption", "Adaption Labs"), json.dumps(ASHBY).encode()
+        Source("ashby", "adaption", "Adaption Labs"), json.dumps(ASHBY).encode(), SCOPE
     )
     assert research.dedupe_key == board_job_key("ashby", "5635dd7e-a0ca-414d-b738-71500502dba9")
     assert research.job_id == "5635dd7e-a0ca-414d-b738-71500502dba9"  # lower-cased

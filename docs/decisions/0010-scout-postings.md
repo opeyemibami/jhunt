@@ -1,6 +1,6 @@
 # 0010: Scout, part 1: sources, board lists, postings and scope
 
-Status: proposed in PR 3.1; accepted when the owner merges it. PR 3.2 adds the workflow and the fit score.
+Status: accepted (owner, PR 3.1 review, 2026-11-01), with the US-town and on-site region rules and the Northern Ireland setting. PR 3.2 adds the workflow and the fit score.
 
 ## Context
 
@@ -38,15 +38,20 @@ The owner's priority order (docs/backlog.md) puts a minimal Scout second: read t
 
 Each posting's key is `board_job_key(provider, job_id)`, the same key Capture uses (ADR 0007, `jhunt.jobs`), so a captured posting and its application share a `dedupe_key`.
 
-**Scope** (`classify_location(location, remote) -> (in_scope, reason)`). Every posting is kept; the filter only labels it (owner review). In order:
+**Scope** (`classify_location(location, remote, scope) -> (in_scope, reason)`). Every posting is kept; the filter only labels it (owner review). A posting may list several locations (`London; Dublin`, `London | Dublin`); each is read on its own, and any one Irish location puts the posting in scope. In order:
 
-1. **An Irish place** (Dublin, Cork, Galway, Limerick), "Ireland" (including "Republic of Ireland"), or the code "IE" on its own (`Remote - IE`) is in scope. The reason is the place, or "Ireland". Any one location in a list counts (`London | Dublin`).
-   - **Northern Ireland, Belfast and Derry are removed first.** They are in the UK, which means a different work permit. On their own they are out of scope, as `out: … (UK)`. **For the owner to confirm.**
-2. **A region that includes Ireland** (EMEA, Europe, EU, worldwide, anywhere, global, international) is in scope, with or without the remote flag, because such a location can't be an office. The reason is `region <name>`.
-3. **A bare "Remote"**, meaning the remote flag or the word "remote" with no country or region, is **in scope, flagged as `remote (region not stated)`** (owner: record this rule).
+1. **An Irish place** (Dublin, Cork, Galway, Limerick), "Ireland" (including "Republic of Ireland"), or the code "IE" on its own (`Remote - IE`) is in scope. The reason is the place, or "Ireland".
+   - **US towns are out.** An Irish city name in a location that names the US is not Irish. "Names the US" means "United States", "USA", "U.S." or a capital "US", or a state (code or name, with an optional ZIP) after a comma. So `Dublin, CA`, `Dublin, Ohio, United States` and `Galway, NY` are out, as `out: Dublin, CA (US)` (owner review).
+   - **Northern Ireland, Belfast and Derry are removed first**, since they contain "Ireland". They are in the UK, which means a different work permit.
+2. **Northern Ireland** follows `northern_ireland_in_scope` in `config/scope.toml` (in git). It is `false` for now (owner decision), so these postings are out, as `out: … (UK)`. When it is `true`, they are in, as `Northern Ireland`. The owner can flip it without a code change.
+3. **A region that includes Ireland** (EMEA, Europe, EU, worldwide, anywhere, global, international) is in scope **only if the posting is remote**: Ashby's remote flag, or the word "remote" in the location. The reason is `region <name>`.
+   - An on-site posting that mentions a region is an office in that region, so it is out, as `out: on-site <place> (<region>)`, for example `out: on-site London, UK (EMEA)` (owner review). A region with no place is `out: on-site (EMEA)`.
+4. **A bare "Remote"**, meaning the remote flag or the word "remote" with no country or region, is **in scope, flagged as `remote (region not stated)`** (owner decision, PR 3.1 review).
    - The region can't be told from the text, and hiding a job that might be open to Ireland costs more than glancing at one that isn't.
    - The digest shows the reason, so these can be read with that in mind.
-4. **Anything else is out of scope**, with the location as the reason (`out: San Francisco, CA`, `out: Remote - US`, `out: Remote - Germany`), or `out: no location`.
+5. **Anything else is out of scope**, with the location as the reason (`out: San Francisco, CA`, `out: Remote - US`, `out: Remote - Germany`), or `out: no location`.
+
+`config/scope.toml` is validated on load: the one setting must be there, true or false, with no unknown keys.
 
 **Storage** (migration 0007, `postings`):
 
@@ -59,4 +64,6 @@ Each posting's key is `board_job_key(provider, job_id)`, the same key Capture us
 
 - The digest (PR 3.3) shows in-scope postings and a count of the hidden ones.
 - Scope rules are plain text matching. A location that names only a city outside Ireland and Europe-wide regions is out; one that names a European country only ("Remote - Germany") is out too, since it requires living there.
+- Whether a posting is remote is decided for the whole posting, not per location: `Berlin; Remote - EMEA` is in scope.
+- Rules can be wrong on a location nobody tested. The posting is still stored with its reason, so a wrong label can be seen and a test added for it.
 - Capturing a Scout posting should snapshot the description from the board API, not by fetching the page (owner, PR 2.5 review). The posting's URL is a board link or an embedded link, which Capture already reads from the API.
