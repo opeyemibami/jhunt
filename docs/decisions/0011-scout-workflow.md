@@ -31,10 +31,14 @@ ADR 0010 covers Scout's sources, board lists, postings and scope. This ADR cover
 **The fit score** (`fit.py`, `config/targets.toml` in git, approved by the owner). It's deterministic, with no model, and every posting is scored, in scope or not:
 
 1. **Exclude**: any `[exclude]` keyword in the **title** sets the score to 0. Only the exclude match is recorded.
-2. **Title**: `[title] weight` (0.6) if any phrase is in the title.
-3. **Include**: plus `[include] weight` (0.08) per keyword found in the title or the description text, up to `max` (0.4).
+2. **Title**: `[title] weight` (0.5) if any phrase is in the title.
+3. **Include**: plus `[include] weight` (0.08) per keyword found in the title or the description text, up to `max` (0.5).
 4. **Penalty**: minus `[penalty] weight` (0.3), once, if any penalty keyword is in the **title**. The posting is lowered, not hidden.
 5. **Clamp** to 0.0 to 1.0, rounded to four places.
+
+**Tuning** (owner, 2026-11-01), after the first real scores. Title 0.6 and max 0.4 became 0.5 and 0.5. Before, a title match with five or more include keywords scored 1.0, so many titles tied there; now 1.0 needs a title match plus seven include keywords. The tuning also:
+- **narrowed the penalty to staff as a level**: "staff engineer", "staff software engineer", "staff ml", "staff machine learning", "staff+", plus "principal" and "distinguished". "Member of Technical Staff", a normal title at Cohere and Anthropic, is no longer penalised;
+- **excluded three more**: "business development", "representative", "it support".
 
 - **Matching** ignores case and needs whole words: no letter or digit on either side, and any whitespace between a phrase's words.
   - **A trailing "s" also matches** (owner, PR 3.2b review): "agent" matches "AI Agents Engineer", "llm" matches "LLMs", "eval" matches "evals", "ml engineer" matches "ML Engineers".

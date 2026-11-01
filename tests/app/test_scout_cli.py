@@ -51,7 +51,7 @@ def test_queues_todays_run_once_with_every_source(
     assert payload["day"] == "2026-11-01"
     assert len(payload["sources"]) == 13
     assert payload["northern_ireland_in_scope"] is False  # from config/scope.toml
-    assert payload["targets"]["penalty_keywords"] == ["staff", "principal", "distinguished"]
+    assert payload["targets"] == scout.load_targets(REPO_CONFIG).as_input()
 
 
 def jhunt_scout(

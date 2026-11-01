@@ -1,4 +1,5 @@
-# Scout's fit score (ADR 0011), approved by the owner on 2026-11-01.
+# Scout's fit score (ADR 0011), approved by the owner on 2026-11-01 and tuned
+# the same day after the first real scores.
 # Deterministic, no model. Matching ignores case and needs whole words
 # ("ml" doesn't match "html"). Every posting is scored, in scope or not.
 #
@@ -9,7 +10,7 @@
 #   clamped to 0.0..1.0.
 
 [title]
-weight = 0.6
+weight = 0.5
 phrases = [
   "forward deployed", "solutions engineer", "applied ai", "ai engineer",
   "machine learning engineer", "ml engineer", "llm", "agent", "agentic",
@@ -20,7 +21,7 @@ phrases = [
 
 [include]
 weight = 0.08
-max = 0.4
+max = 0.5
 keywords = [
   "llm", "agents", "agentic", "langgraph", "rag", "retrieval", "evals",
   "evaluation", "inference", "serving", "vllm", "workflow", "orchestration",
@@ -33,8 +34,14 @@ keywords = [
   "intern", "internship", "director", "head of", "vp", "vice president",
   "manager", "sales", "account executive", "recruiter", "marketing",
   "legal", "counsel", "finance", "accountant",
+  "business development", "representative", "it support",
 ]
 
 [penalty]
 weight = 0.3
-keywords = ["staff", "principal", "distinguished"]
+# Staff as a level, not "Member of Technical Staff" (a normal title at Cohere
+# and Anthropic).
+keywords = [
+  "staff engineer", "staff software engineer", "staff ml",
+  "staff machine learning", "staff+", "principal", "distinguished",
+]
