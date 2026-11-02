@@ -23,7 +23,7 @@ from sqlalchemy import Connection, Engine, text
 
 KINDS = ("role", "project", "metric", "skill", "education")
 LEVELS = ("studied", "used", "built", "production")
-FIELDS = {"id", "kind", "text", "evidence", "verified_at", "status", "level"}
+FIELDS = {"id", "kind", "text", "evidence", "verified_at", "status", "level", "aliases"}
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,99}")
 
 
@@ -46,11 +46,13 @@ class Fact:
     evidence: str | None
     verified_at: date | None
     level: str | None  # skills only; None for a draft's "TODO"
+    aliases: tuple[str, ...] = ()  # skills only: the names the skill goes by
 
     def content_sha256(self) -> str:
         return _content_sha256(
-            self.kind, self.text, self.evidence, self.verified_at, self.status, self.level
-        )
+            self.kind, self.text, self.evidence, self.verified_at, self.status, self.level,
+            self.aliases,
+        )  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ class FactVersion:
     verified_at: date | None
     status: str  # "draft", "verified" or "retired"
     level: str | None
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass
@@ -141,6 +144,14 @@ def _fact(entry: dict[str, Any], n: int) -> tuple[Fact | None, list[str]]:
         problems.append(f"{where}: level {level!r} is not one of {', '.join(LEVELS)}")
         level, bad_level = None, True
 
+    aliases = entry.get("aliases", [])
+    if aliases and kind != "skill":
+        problems.append(f"{where}: aliases are only for skills")
+    elif not isinstance(aliases, list) or not all(
+        isinstance(a, str) and a.strip() for a in aliases
+    ):
+        problems.append(f'{where}: aliases must be a list of names, e.g. ["Kubernetes", "k8s"]')
+
     # Verified facts are strict; drafts may be incomplete but are never citable.
     if status == "verified":
         if evidence is None:
@@ -161,6 +172,7 @@ def _fact(entry: dict[str, Any], n: int) -> tuple[Fact | None, list[str]]:
             evidence=evidence.strip() if evidence else None,
             verified_at=verified_at,
             level=level,
+            aliases=tuple(a.strip() for a in aliases),
         ),
         [],
     )
@@ -215,7 +227,7 @@ def retire_fact(engine: Engine, fact_id: str) -> int:
             raise FactsError([f"{fact_id} is already retired (version {latest.version})"])
         retired = Fact(
             fact_id, latest.kind, latest.text, "retired", latest.evidence, latest.verified_at,
-            latest.level,
+            latest.level, latest.aliases,
         )  # fmt: skip
         _insert(conn, retired, latest.version + 1)
     return latest.version + 1
@@ -264,19 +276,19 @@ def _latest(conn: Connection) -> dict[str, FactVersion]:
     rows = conn.execute(
         text(
             "SELECT DISTINCT ON (fact_id) id, fact_id, version, kind, text, evidence,"
-            " verified_at, status, level FROM facts ORDER BY fact_id, version DESC"
+            " verified_at, status, level, aliases FROM facts ORDER BY fact_id, version DESC"
         )
     )
-    return {r.fact_id: FactVersion(**r._mapping) for r in rows}
+    return {r.fact_id: FactVersion(**{**r._mapping, "aliases": tuple(r.aliases)}) for r in rows}
 
 
 def _insert(conn: Connection, fact: Fact, version: int) -> None:
     conn.execute(
         text(
             "INSERT INTO facts (fact_id, version, kind, text, evidence, verified_at, status,"
-            " level, content_sha256, created_by)"
+            " level, aliases, content_sha256, created_by)"
             " VALUES (:fact_id, :version, :kind, :text, :evidence, :verified_at, :status,"
-            " :level, :sha, 'owner')"
+            " :level, :aliases, :sha, 'owner')"
         ),
         {
             "fact_id": fact.fact_id,
@@ -287,6 +299,7 @@ def _insert(conn: Connection, fact: Fact, version: int) -> None:
             "verified_at": fact.verified_at,
             "status": fact.status,
             "level": fact.level,
+            "aliases": list(fact.aliases),
             "sha": fact.content_sha256(),
         },
     )
@@ -294,7 +307,13 @@ def _insert(conn: Connection, fact: Fact, version: int) -> None:
 
 def _content_sha256(
     kind: str, body: str, evidence: str | None, verified_at: date | None, status: str,
-    level: str | None,
+    level: str | None, aliases: tuple[str, ...],
 ) -> str:  # fmt: skip
-    fields = [kind, body, evidence, verified_at.isoformat() if verified_at else None, status, level]
+    fields: list[object] = [
+        kind, body, evidence, verified_at.isoformat() if verified_at else None, status, level,
+    ]  # fmt: skip
+    # Aliases count only when there are some, so a fact imported before they
+    # existed keeps its hash and doesn't look changed (migration 0011).
+    if aliases:
+        fields.append(list(aliases))
     return hashlib.sha256(json.dumps(fields).encode()).hexdigest()

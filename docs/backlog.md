@@ -16,6 +16,11 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
 - **3.6b** application pack drafts: `pack.draft` (Sonnet) drafts claims as `{text, fact_ids}` from the verified facts, with the job description wrapped and labelled as untrusted data. Every draft goes through the 3.6a validator, and blocked claims are listed, never reworded. (3.6a, the validator and `test_fact_bank.py`, is PR 3.6a; owner, 2026-11-02)
+- **After 3.6b, plan first, build only once the owner approves: search profiles.**
+  - **Profiles** live in `config/profiles/<name>/` (`targets.toml`, `sources.toml`, `scope.toml`). There are three to start: `platform` (today's config), `frontier-early` (frontier and enterprise labs; earlier-career titles such as Research Engineer, Member of Technical Staff and AI Engineer; no Staff penalty) and `postdoc` (postdoctoral research aligned with the owner's PhD: vision, multimodal, anomaly detection, inference).
+  - **Postings stay shared.** Scores are per (posting, profile), so one posting can rank in several profiles. The digest gets a tab per profile.
+  - **Postdoc sources need research first.** `docs/sources-postdoc.md` will cover jobs.ac.uk, EURAXESS, Nature Careers, Academic Positions and the Irish universities: which offer an API or feed under their terms, and which are email alerts only. Docs only; no scraping. (Owner, PR 3.6a review)
+- **A postdoc pack type** (a research statement and a publication-led CV), after 3.6b's pack drafting. (Owner, PR 3.6a review)
 
 Decisions:
 
@@ -33,7 +38,7 @@ Decisions:
 
 - Tool gateway: add the side-effect assertion to `tests/guarantees/test_worker_crash.py` ("side effects once"): a side effect in the interrupted step runs once across the crash and the resume. (Week 1 plan review)
 - Sources move from docs/sources.md into a sources table that Scout reads, editable from a Sources page in the web app (add, pause, remove; adding checks the endpoint). docs/sources.md stays as the seed data and the record of terms checked. (docs/sources.md PR)
-- Targets move from config/targets.toml into a versioned table, editable from a Targets page with a preview of how today's postings would re-score. Saving re-scores stored postings. Each version is kept so the funnel review can compare them. (Owner, 2026-11-01)
+- Profiles page: create and edit search profiles in the browser, with the targets, sources and scope of each. It replaces the Targets page item: targets are per profile. Each version is kept, and saving re-scores stored postings for that profile. (Owner, PR 3.6a review)
 - Facts page: add, edit and retire facts in the browser. An edit creates a new version and never overwrites; drafts keep citing the version they used. Only the owner writes facts; drafts may suggest a missing fact, which the owner adds. (Owner, 2026-11-01)
 - WSL isn't always on. Before Scout's daily 07:00 run, decide between keeping the PC awake and moving the worker to Cloud Run early. (PR 2 review)
 

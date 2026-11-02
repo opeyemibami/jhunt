@@ -20,11 +20,16 @@ Hard rule 6: every drafted claim cites one or more fact ids, nothing that isn't 
    - `10,000` and `10000` are the same number, and `×` counts as `x`. `40%` doesn't match a fact's `40 engineers`, and `41%` doesn't match `40%`.
    - A number inside a word (`B2B`, `S3`) isn't read as a number.
    - A spelled-out number (`one` to `twenty`, the tens, `hundred(s)`, `thousand(s)`, `million(s)`, `billion(s)`, `dozen(s)`) is blocked unless the same word is in a cited fact, so wording can't carry a number the facts don't have.
-5. **A skill stated above its level** (owner: a word list, strict):
+5. **A skill stated above its level** (owner: a word list, strict; mentioned, not just cited):
    - `config/claim_levels.toml` (in git, reviewed like code) lists the words that state each level: `studied` < `used` < `built` < `production`.
    - A claim's stated level is the **highest** level whose words it contains, matched as whole words and ignoring case.
-   - The claim is blocked if that level is above the level of **any** skill fact it cites. So "Built pipelines with LangGraph and Kubernetes" is blocked when Kubernetes is only `used`.
-   - A claim that cites no skill fact, or uses no level words, has no level to check.
+   - The claim is blocked if that level is above the level of **any verified skill it cites or mentions** (owner, PR 3.6a review). So "Built pipelines with LangGraph and Kubernetes" is blocked when Kubernetes is only `used`. "Deployed and operated Kubernetes in production" citing only a project fact is blocked too, with the reason marked `(mentioned, not cited)`: a skill can't borrow a level by citing a different fact.
+   - **A mention** is any of the skill fact's `aliases` (`aliases = ["Kubernetes", "k8s"]`, skills only; ADR 0014, migration 0011), found as a whole word, ignoring case.
+     - A skill without aliases is named by its text, split on `and`, `,`, `/` and parentheses: "Python (FastAPI, asyncio)" names Python, FastAPI and asyncio.
+     - When a skill has aliases, they replace its text for this.
+   - A mentioned skill that isn't verified (draft or retired) has no verified level to compare with, so it adds no level check.
+   - A claim that uses no level words, or neither cites nor mentions a skill, has no level to check.
+   - `config/claim_levels.toml` is approved as proposed. The owner tunes it after the first real drafts.
 
 **The guarantee**: "No claim without a fact", in `tests/guarantees/test_fact_bank.py`. It checks, against facts imported into a scratch database, that each kind of unsupported claim is blocked with its reason and that a blocked claim's text is never changed.
 
@@ -32,4 +37,6 @@ Hard rule 6: every drafted claim cites one or more fact ids, nothing that isn't 
 
 - **It checks citations, numbers and level words, not meaning.** A claim can cite the right fact and still say something the fact doesn't. "Led the team" can cite a fact that only says "member of the team". Catching that needs a judge model or evals, both deferred (backlog: weeks 17 to 18). The owner reads every draft before using it; drafting is level 0, suggest only.
 - **The level words are a list.** A wording that isn't in it states no level. The list is tuned in config, like the fit score's targets.
+- **Mentions are found by name.** A skill called by a name that isn't in its aliases or its text (say "K8s" when the only alias is "Kubernetes") isn't recognised. Aliases fix that.
+- **A short name can over-match.** "Go" also matches the verb, and an alias like "R" would be worse. Aliases that would match ordinary words belong in neither the aliases nor the fact's text, since the text is the fallback.
 - **Spelled-out numbers include `one`**, so "one of the first engineers" is blocked unless a cited fact says "one". The drafting prompt (3.6b) asks for digits, and a blocked claim shows why it was blocked.

@@ -8,7 +8,8 @@ every reason that applies. It never rewords a claim. A claim is blocked if:
 2. it cites a fact the bank doesn't have;
 3. a cited fact's latest version isn't verified (draft or retired);
 4. it has a number, in digits or spelled out, that its cited facts don't;
-5. its words state a skill level above the level of a skill fact it cites.
+5. its words state a skill level above the level of a skill it cites or
+   mentions: a skill can't borrow a level by citing another fact.
 
 It checks citations, numbers and level words, not meaning (ADR 0015, Limits).
 It is pure: the caller passes the facts (latest_facts) and the level words.
@@ -143,13 +144,20 @@ def _check(claim: Claim, facts: Mapping[str, FactVersion], levels: ClaimLevels) 
         if word not in words:
             problems.append(f"spelled-out number {word!r} is not in its cited facts")
 
-    # Skill levels: the highest level the wording states, against each skill fact.
+    # Skill levels: the highest level the wording states, against every verified
+    # skill the claim cites or mentions (owner, PR 3.6a review). "Deployed
+    # Kubernetes in production" citing only a project is still about Kubernetes.
     stated = _stated_level(claim.text, levels)
     if stated is not None:
         level, word = stated
-        for f in cited:
-            if f.kind == "skill" and f.level and LEVELS.index(level) > LEVELS.index(f.level):
-                problems.append(f"states {level}, above {f.fact_id!r} ({f.level}): {word!r}")
+        skills = {f.fact_id: f for f in cited if f.kind == "skill"}
+        for f in facts.values():
+            if f.kind == "skill" and f.status == "verified" and _mentions(claim.text, f):
+                skills.setdefault(f.fact_id, f)
+        for f in skills.values():
+            if f.level and LEVELS.index(level) > LEVELS.index(f.level):
+                how = "" if f.fact_id in claim.fact_ids else " (mentioned, not cited)"
+                problems.append(f"states {level}, above {f.fact_id!r} ({f.level}): {word!r}{how}")
 
     return CheckedClaim(
         text=claim.text,
@@ -176,6 +184,16 @@ def _stated_level(text: str, levels: ClaimLevels) -> tuple[str, str] | None:
             if _phrase(word).search(text):
                 return level, word
     return None
+
+
+def _mentions(text: str, skill: FactVersion) -> bool:
+    """Whether the text names the skill: by its aliases if it has any, else by
+    its text split on "and", ",", "/" and parentheses ("Python (FastAPI,
+    asyncio)" names Python, FastAPI and asyncio). Whole words, any case."""
+    names = skill.aliases or tuple(
+        n.strip() for n in re.split(r"\s+and\s+|[,/()]", skill.text, flags=re.I) if n.strip()
+    )
+    return any(_phrase(name).search(text) for name in names)
 
 
 def _phrase(words: str) -> re.Pattern[str]:

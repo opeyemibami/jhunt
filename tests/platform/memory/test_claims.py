@@ -21,8 +21,11 @@ REPO_CONFIG = Path(__file__).resolve().parents[3] / "config"
 
 
 def fact(fact_id: str, body: str, *, kind: str = "metric", level: str | None = None,
-         status: str = "verified", row: int = 1) -> FactVersion:  # fmt: skip
-    return FactVersion(row, fact_id, 1, kind, body, "evidence", date(2026, 10, 30), status, level)
+         status: str = "verified", row: int = 1,
+         aliases: tuple[str, ...] = ()) -> FactVersion:  # fmt: skip
+    return FactVersion(
+        row, fact_id, 1, kind, body, "evidence", date(2026, 10, 30), status, level, aliases
+    )
 
 
 LEVEL_WORDS = ClaimLevels(
@@ -132,3 +135,48 @@ def test_bad_level_words_fail(tmp_path: Path, body: str, error: str) -> None:
 def test_missing_level_words_file_fails(tmp_path: Path) -> None:
     with pytest.raises(ClaimLevelsError, match="claim levels file missing"):
         load_claim_levels(tmp_path)
+
+
+PROJECT = fact("project", "Inference platform: a FastAPI gateway on Kubernetes", kind="project")
+
+
+@pytest.mark.parametrize(
+    ("claim", "skill", "ok"),
+    [
+        # Mentioned but not cited: the level check still applies (owner, PR 3.6a review)
+        ("Ran Kubernetes in production", fact("k8s", "Kubernetes", kind="skill", level="used",
+         row=2, aliases=("Kubernetes", "k8s")), False),
+        ("Ran k8s in production", fact("k8s", "Kubernetes", kind="skill", level="used",
+         row=2, aliases=("Kubernetes", "k8s")), False),
+        ("Built tools for K8S", fact("k8s", "Kubernetes", kind="skill", level="used",
+         row=2, aliases=("Kubernetes", "k8s")), False),
+        ("Built a FastAPI gateway", fact("api", "FastAPI", kind="skill", level="built",
+         row=2), True),
+        # No aliases: the skill's text, split on "and", ",", "/" and parentheses
+        ("Deployed asyncio services", fact("py", "Python (FastAPI, asyncio)", kind="skill",
+         level="built", row=2), False),
+        ("Deployed TensorFlow models", fact("ml", "PyTorch and TensorFlow / JAX", kind="skill",
+         level="used", row=2), False),
+        ("Built JAX kernels", fact("ml", "PyTorch and TensorFlow / JAX", kind="skill",
+         level="used", row=2), False),
+        # Whole words only, and a claim that mentions no skill is unaffected
+        ("Deployed Kubernetesque tooling", fact("k8s", "Kubernetes", kind="skill", level="used",
+         row=2), True),
+        ("Deployed the inference platform", fact("k8s", "Kubernetes", kind="skill", level="used",
+         row=2), True),
+        # Aliases replace the text: the text isn't matched when there are aliases
+        ("Deployed Kubernetes", fact("k8s", "Kubernetes", kind="skill", level="used", row=2,
+         aliases=("k8s",)), True),
+    ],
+)  # fmt: skip
+def test_a_skill_mentioned_but_not_cited_is_checked_too(
+    claim: str, skill: FactVersion, ok: bool
+) -> None:
+    problems = blocked(claim, [PROJECT, skill], ("project",))
+    assert (problems == []) is ok, problems
+
+
+def test_a_mentioned_skill_that_isnt_verified_states_no_level() -> None:
+    # A draft or retired skill has no verified level to compare with.
+    draft = fact("k8s", "Kubernetes", kind="skill", level=None, status="draft", row=2)
+    assert blocked("Ran Kubernetes in production", [PROJECT, draft], ("project",)) == []

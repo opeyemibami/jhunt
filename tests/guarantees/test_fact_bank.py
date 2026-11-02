@@ -39,10 +39,28 @@ level = "built"
 id = "skill-k8s"
 kind = "skill"
 text = "Kubernetes"
+aliases = ["Kubernetes", "k8s"]
 evidence = "course certificate and side project"
 verified_at = 2026-10-30
 status = "verified"
 level = "used"
+
+[[fact]]
+id = "skill-fastapi"
+kind = "skill"
+text = "FastAPI"
+evidence = "github.com/me/inferex"
+verified_at = 2026-10-30
+status = "verified"
+level = "built"
+
+[[fact]]
+id = "project-inferex"
+kind = "project"
+text = "Inferex: an inference platform with a FastAPI gateway on Kubernetes"
+evidence = "github.com/me/inferex"
+verified_at = 2026-10-30
+status = "verified"
 
 [[fact]]
 id = "skill-rust"
@@ -82,6 +100,7 @@ CLAIMS = [
     Claim("Built durable agent workflows with LangGraph", ("skill-langgraph",)),
     Claim("Served 1200 customers between 2021 and 2024", ("role-acme",)),
     Claim("Used Kubernetes to deploy model services", ("skill-k8s",)),
+    Claim("Built a FastAPI gateway", ("project-inferex",)),  # FastAPI is "built"
     # Unsupported: blocked, with the reason
     Claim("Led the ML platform team at Acme", ()),
     Claim("Expert in TensorFlow", ("skill-tensorflow",)),
@@ -92,6 +111,8 @@ CLAIMS = [
     Claim("Cut LangGraph inference cost by 35%", ("skill-langgraph",)),  # 35% is another fact's
     Claim("Ran Kubernetes clusters in production", ("skill-k8s",)),
     Claim("Built pipelines with LangGraph and Kubernetes", ("skill-langgraph", "skill-k8s")),
+    # A skill's level can't be borrowed by citing another fact: mentioned is enough.
+    Claim("Deployed and operated Kubernetes in production", ("project-inferex",)),
 ]
 BLOCKED_FOR = {
     "Led the ML platform team at Acme": "cites no fact",
@@ -103,6 +124,7 @@ BLOCKED_FOR = {
     "Cut LangGraph inference cost by 35%": "number '35%' is not in its cited facts",
     "Ran Kubernetes clusters in production": "states production, above 'skill-k8s' (used)",
     "Built pipelines with LangGraph and Kubernetes": "states built, above 'skill-k8s' (used)",
+    "Deployed and operated Kubernetes in production": "states production, above 'skill-k8s' (used)",
 }
 
 
@@ -111,7 +133,7 @@ def test_unsupported_claims_are_blocked_never_reworded(bank: Engine) -> None:
 
     # Every claim comes back, in order, its text exactly as drafted.
     assert [c.text for c in checked.claims] == [c.text for c in CLAIMS]
-    assert [c.text for c in checked.accepted] == [c.text for c in CLAIMS[:4]]
+    assert [c.text for c in checked.accepted] == [c.text for c in CLAIMS[:5]]
     assert {c.text for c in checked.blocked} == set(BLOCKED_FOR)
     for claim in checked.blocked:
         reason = BLOCKED_FOR[claim.text]

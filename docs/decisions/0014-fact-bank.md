@@ -20,6 +20,7 @@ The facts live in the owner's own TOML file, outside git, and are imported into 
 | `status` | required; `draft` or `verified` |
 | `evidence` | a link or a note; **required when verified** |
 | `verified_at` | a TOML date or `"YYYY-MM-DD"`, not in the future; **required when verified** |
+| `aliases` | skills only, optional: a list of the names the skill goes by, e.g. `["Kubernetes", "k8s"]`. The claim validator uses them to find mentions of the skill (ADR 0015). Migration 0011 adds the column. A fact without aliases keeps the hash it had before, so existing facts don't look changed |
 | `level` | skills only: `studied`, `used`, `built` or `production`. **Required for a verified skill.** A draft skill may leave it out or say `"TODO"`, stored as no level. **Refused on any other kind.** |
 
 Any other key, or any other top-level table, is refused. `[[facts]]` gets a hint to write `[[fact]]`.
