@@ -25,6 +25,8 @@ from jhunt.workflows.workspace.submission import (
 )
 
 TABLES = [
+    "draft_claims",
+    "pack_drafts",
     "submission_documents",
     "submissions",
     "documents",
@@ -54,6 +56,10 @@ EACH = dict.fromkeys(TABLES, 1) | {"events": 2, "tool_calls": 2}
 
 def submission_thread(application_id: int) -> str:
     return submission_thread_id(application_id, ["1" * 64], "email", "2026-11-01T00:00:00+00:00")
+
+
+def pack_thread(application_id: int) -> str:
+    return f"pack-{application_id}-1"
 
 
 def seed(engine: Engine, n: int) -> int:
@@ -129,6 +135,23 @@ def seed(engine: Engine, n: int) -> int:
             ),
             {"k": f"sub-key-{n}", "t": sub_thread, "r": json.dumps(cv_ref)},
         )
+        # A pack draft with one claim (ADR 0016).
+        draft_id = conn.execute(
+            text(
+                "INSERT INTO pack_drafts (application_id, thread_id, snapshot_id, step,"
+                " provider, model) SELECT id, :t, snapshot_id, 'pack.draft', 'anthropic',"
+                " 'claude-sonnet-5-5' FROM applications WHERE id = :a RETURNING id"
+            ),
+            {"t": pack_thread(application_id), "a": application_id},
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO draft_claims (draft_id, section, position, text, fact_ids,"
+                " fact_versions, blocked, problems)"
+                " VALUES (:d, 'cv_line', 0, 'Built things', '{}', '{}', true, '{cites no fact}')"
+            ),
+            {"d": draft_id},
+        )
     return application_id
 
 
@@ -150,7 +173,11 @@ def test_plan_names_everything_it_will_remove(engine: Engine) -> None:
         "bkt",
         [f"snapshots/{'1' * 64}/", f"submissions/{'1' * 64}/"],
     )
-    assert plan.threads == [capture.thread_id_for("1" * 64), submission_thread(target)]
+    assert plan.threads == [
+        capture.thread_id_for("1" * 64),
+        submission_thread(target),
+        pack_thread(target),
+    ]
     assert plan.rows == EACH
     assert cmd.plan(engine, 9999) is None
 
@@ -182,7 +209,13 @@ def test_triggers_are_back_on_after_the_delete(engine: Engine) -> None:
         conn.execute(text("DELETE FROM events WHERE application_id = :a"), {"a": other})
     with pytest.raises(IntegrityError, match="refused"), engine.begin() as conn:
         conn.execute(text("DELETE FROM applications WHERE id = :a"), {"a": other})
-    for table in ("submission_documents", "submissions", "documents"):
+    for table in (
+        "draft_claims",
+        "pack_drafts",
+        "submission_documents",
+        "submissions",
+        "documents",
+    ):
         with pytest.raises(IntegrityError, match="refused"), engine.begin() as conn:
             conn.execute(text(f"DELETE FROM {table}"))
 

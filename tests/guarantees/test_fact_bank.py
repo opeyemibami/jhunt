@@ -7,14 +7,18 @@ verified, has a number its cited facts don't, or states a skill above its
 fact's level.
 """
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import URL, Engine, create_engine, pool
+from sqlalchemy import URL, Engine, create_engine, pool, text
 
 from jhunt.platform.memory.claims import Claim, check_claims, load_claim_levels
 from jhunt.platform.memory.facts import import_facts, latest_facts, read_facts, retire_fact
+from jhunt.platform.models import CallRecord, ModelRequest, ModelResponse
+from jhunt.workflows.application_pack.pack import draft_pack, store_draft
+from jhunt.workflows.capture.record import record_capture
 
 REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
 FACTS = """
@@ -161,3 +165,47 @@ def test_every_reason_is_listed(bank: Engine) -> None:
 def test_an_empty_draft_has_nothing_to_block(bank: Engine) -> None:
     checked = check_claims([], latest_facts(bank), load_claim_levels(REPO_CONFIG))
     assert (checked.claims, checked.blocked) == ([], [])
+
+
+def test_a_drafted_pack_stores_unsupported_claims_as_blocked_and_unchanged(bank: Engine) -> None:
+    # The drafting path (ADR 0016): what a model drafts is checked before it
+    # is stored, and a blocked claim is kept exactly as the model wrote it.
+    drafted = {
+        "cv_lines": [
+            {"text": "Cut inference cost by 35% at Acme", "fact_ids": ["role-acme"]},
+            {"text": "Cut inference cost by over 40% at Acme", "fact_ids": ["role-acme"]},
+            {"text": "Led a team of 12 at Acme", "fact_ids": []},
+        ],
+        "cover_note": [
+            {"text": "I ran Kubernetes in production at Acme", "fact_ids": ["role-acme"]},
+        ],
+    }
+
+    def model(request: ModelRequest) -> ModelResponse:
+        record = CallRecord("anthropic", "claude-sonnet-5-5", request.step, 1, 0, 0, 1, 1, None)
+        return ModelResponse(text=json.dumps(drafted), stop="end", record=record)
+
+    refs = {
+        "html": {"uri": "gs://b/h", "generation": 1, "sha256": "aa"},
+        "text": {"uri": "gs://b/t", "generation": 2, "sha256": "bb"},
+    }
+    application_id, _ = record_capture(
+        bank, url="https://x/1", company="Fin", title="AI Engineer", dedupe_key="f" * 64,
+        snapshot=refs,
+    )  # fmt: skip
+    with bank.connect() as conn:
+        snapshot_id = conn.execute(text("SELECT snapshot_id FROM applications")).scalar_one()
+    draft = draft_pack(model, latest_facts(bank), "A job.", load_claim_levels(REPO_CONFIG))
+    store_draft(bank, draft, application_id=application_id, thread_id="pack-g-1",
+                snapshot_id=snapshot_id)  # fmt: skip
+
+    with bank.connect() as conn:
+        stored = conn.execute(
+            text("SELECT section, text, blocked FROM draft_claims ORDER BY section, position")
+        ).all()
+    assert [(c.section, c.text, c.blocked) for c in stored] == [
+        ("cover_note", "I ran Kubernetes in production at Acme", True),
+        ("cv_line", "Cut inference cost by 35% at Acme", False),
+        ("cv_line", "Cut inference cost by over 40% at Acme", True),
+        ("cv_line", "Led a team of 12 at Acme", True),
+    ]

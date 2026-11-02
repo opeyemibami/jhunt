@@ -1,10 +1,11 @@
 """`jhunt-applications-delete <id>`: delete one application and everything it left.
 
 Owner only: for an application that should never have been captured, or a
-privacy request. In one transaction it removes the application's submissions,
-documents and their links (ADR 0013), its events, the application, its
+privacy request. In one transaction it removes the application's pack drafts
+and their claims (ADR 0016), its submissions, documents and their links (ADR
+0013), its events, the application, its
 snapshot row, and its threads' tool calls, runs, threads rows and checkpoints
-(Capture's, and each submission's). Then it deletes the snapshot's and the
+(Capture's, each submission's and each draft's). Then it deletes the snapshot's and the
 submitted files' records, every generation, as jhunt-records-delete does
 (ADR 0002).
 
@@ -32,8 +33,10 @@ from jhunt.platform.artifacts.curator import (
 from jhunt.platform.config import get_settings
 from jhunt.workflows import capture
 
-# The triggers that refuse deletes, by table (migrations 0005, 0006 and 0009).
+# The triggers that refuse deletes, by table (migrations 0005, 0006, 0009, 0012).
 _GUARDS = {
+    "draft_claims": "draft_claims_append_only",
+    "pack_drafts": "pack_drafts_append_only",
     "submission_documents": "submission_documents_append_only",
     "submissions": "submissions_append_only",
     "documents": "documents_append_only",
@@ -58,6 +61,11 @@ class Plan:
 # delete order: what points at the application first, then the application,
 # then the snapshot it points at.
 _SCOPE = [
+    (
+        "draft_claims",
+        "draft_id IN (SELECT id FROM pack_drafts WHERE application_id = :application_id)",
+    ),
+    ("pack_drafts", "application_id = :application_id"),
     (
         "submission_documents",
         "submission_id IN (SELECT id FROM submissions WHERE application_id = :application_id)",
@@ -100,6 +108,11 @@ def plan(engine: Engine, application_id: int) -> Plan | None:
                 " ORDER BY thread_id"
             ),
             {"pattern": f"submission-{application_id}-%"},
+        ).scalars()
+        # Each draft's Application pack thread (ADR 0016).
+        threads += conn.execute(
+            text("SELECT thread_id FROM pack_drafts WHERE application_id = :a ORDER BY id"),
+            {"a": application_id},
         ).scalars()
         bucket, prefix = _snapshot_folder(found.html_uri)
         prefixes = [prefix]

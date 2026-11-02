@@ -15,7 +15,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
-- **3.6b** application pack drafts: `pack.draft` (Sonnet) drafts claims as `{text, fact_ids}` from the verified facts, with the job description wrapped and labelled as untrusted data. Every draft goes through the 3.6a validator, and blocked claims are listed, never reworded. (3.6a, the validator and `test_fact_bank.py`, is PR 3.6a; owner, 2026-11-02)
+- **3.6b-2** the Application pack workflow (`draft → check → store`), the snapshot read through the gateway, `jhunt-pack <application_id> [--wait]` printing the cover note, CV lines and blocked claims, and the registry wiring; then a pack page on the digest (ADR 0016).
 - **After 3.6b, plan first, build only once the owner approves: search profiles.**
   - **Profiles** live in `config/profiles/<name>/` (`targets.toml`, `sources.toml`, `scope.toml`). There are three to start: `platform` (today's config), `frontier-early` (frontier and enterprise labs; earlier-career titles such as Research Engineer, Member of Technical Staff and AI Engineer; no Staff penalty) and `postdoc` (postdoctoral research aligned with the owner's PhD: vision, multimodal, anomaly detection, inference).
   - **Postings stay shared.** Scores are per (posting, profile), so one posting can rank in several profiles. The digest gets a tab per profile.
