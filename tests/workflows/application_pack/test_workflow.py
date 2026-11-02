@@ -41,7 +41,13 @@ DRAFT = {
         {"text": "Cut inference cost by 35% at Acme", "fact_ids": ["role-acme"]},
         {"text": "Cut inference cost by 50% at Acme", "fact_ids": ["role-acme"]},
     ],
-    "cover_note": [{"text": "At Acme I cut inference cost by 35%.", "fact_ids": ["role-acme"]}],
+    "cover_note": [
+        {
+            "text": "At Acme I cut inference cost by 35%.",
+            "fact_ids": ["role-acme"],
+            "group": "experience",
+        }
+    ],
 }
 
 
