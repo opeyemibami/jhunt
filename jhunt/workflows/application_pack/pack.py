@@ -214,10 +214,10 @@ def store_draft(
     return stored
 
 
-def cover_note_text(draft: PackDraft, config: PackConfig, *, company: str, role: str) -> str:
-    """The fixed opening, the accepted sentences, the fixed closing. Blocked
-    sentences are never in it."""
-    body = " ".join(c.text for c in draft.sections["cover_note"].accepted)
+def cover_note_text(accepted: list[str], config: PackConfig, *, company: str, role: str) -> str:
+    """The fixed opening, the accepted sentences, the fixed closing. Pass only
+    accepted sentences: a blocked one must never be in the note."""
+    body = " ".join(accepted)
     opening = config.opening.format(company=company, role=role)
     closing = config.closing.format(company=company, role=role)
     return "\n\n".join(part for part in (opening, body, closing) if part)

@@ -7,3 +7,5 @@
 # Cheap by default. Steps that need more quality get explicit routes, chosen
 # by the week 17 evals.
 default = "anthropic:claude-haiku-5-5"
+# Pack drafts need the quality: approved plan, 2026-10-31 (ADR 0016).
+"pack.draft" = "anthropic:claude-sonnet-5-5"
