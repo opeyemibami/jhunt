@@ -16,9 +16,10 @@ TIMEOUT = 60
 
 
 def config_dir(tmp_path: Path, sources: str) -> Path:
-    """The repo's scope and targets, with the test's own sources: never the
-    real boards."""
-    for name in ("scope.toml", "targets.toml"):
+    """The repo's scope, targets and claim levels, with the test's own
+    sources: never the real boards."""
+    # The worker's wiring also reads the claim level words (ADR 0015).
+    for name in ("scope.toml", "targets.toml", "claim_levels.toml"):
         shutil.copy(REPO_CONFIG / name, tmp_path / name)
     (tmp_path / "sources.toml").write_text(sources)
     return tmp_path
