@@ -27,7 +27,7 @@ Hard rule 6: every drafted claim cites one or more fact ids, nothing that isn't 
    - **A mention** is any of the skill fact's `aliases` (`aliases = ["Kubernetes", "k8s"]`, skills only; ADR 0014, migration 0011), found as a whole word, ignoring case.
      - A skill without aliases is named by its text, split on `and`, `,`, `/` and parentheses: "Python (FastAPI, asyncio)" names Python, FastAPI and asyncio.
      - When a skill has aliases, they replace its text for this.
-   - A mentioned skill that isn't verified (draft or retired) has no verified level to compare with, so it adds no level check.
+   - **A claim that mentions a draft or retired skill is blocked** (owner, PR 3.6a review), whatever its wording: `mentions unverified skill 'skill-rust' (draft)`. Naming a skill the bank doesn't vouch for adds that skill. A cited one is already blocked as not verified, and is reported once.
    - A claim that uses no level words, or neither cites nor mentions a skill, has no level to check.
    - `config/claim_levels.toml` is approved as proposed. The owner tunes it after the first real drafts.
 
@@ -37,6 +37,7 @@ Hard rule 6: every drafted claim cites one or more fact ids, nothing that isn't 
 
 - **It checks citations, numbers and level words, not meaning.** A claim can cite the right fact and still say something the fact doesn't. "Led the team" can cite a fact that only says "member of the team". Catching that needs a judge model or evals, both deferred (backlog: weeks 17 to 18). The owner reads every draft before using it; drafting is level 0, suggest only.
 - **The level words are a list.** A wording that isn't in it states no level. The list is tuned in config, like the fit score's targets.
+- **A skill absent from the fact bank can't be detected.** The validator finds mentions only of skills the bank has, verified or not. A claim naming a skill the owner never entered (say "Terraform", with no Terraform fact) passes, if nothing else blocks it. Catching that needs the judge or evals, like meaning. Listing a skill as a draft fact is how to make sure it's caught.
 - **Mentions are found by name.** A skill called by a name that isn't in its aliases or its text (say "K8s" when the only alias is "Kubernetes") isn't recognised. Aliases fix that.
 - **A short name can over-match.** "Go" also matches the verb, and an alias like "R" would be worse. Aliases that would match ordinary words belong in neither the aliases nor the fact's text, since the text is the fallback.
 - **Spelled-out numbers include `one`**, so "one of the first engineers" is blocked unless a cited fact says "one". The drafting prompt (3.6b) asks for digits, and a blocked claim shows why it was blocked.

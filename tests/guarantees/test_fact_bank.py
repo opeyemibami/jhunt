@@ -113,6 +113,8 @@ CLAIMS = [
     Claim("Built pipelines with LangGraph and Kubernetes", ("skill-langgraph", "skill-k8s")),
     # A skill's level can't be borrowed by citing another fact: mentioned is enough.
     Claim("Deployed and operated Kubernetes in production", ("project-inferex",)),
+    # A skill the bank holds only as a draft can't be named, cited or not.
+    Claim("Added a Rust client to Inferex", ("project-inferex",)),
 ]
 BLOCKED_FOR = {
     "Led the ML platform team at Acme": "cites no fact",
@@ -125,6 +127,7 @@ BLOCKED_FOR = {
     "Ran Kubernetes clusters in production": "states production, above 'skill-k8s' (used)",
     "Built pipelines with LangGraph and Kubernetes": "states built, above 'skill-k8s' (used)",
     "Deployed and operated Kubernetes in production": "states production, above 'skill-k8s' (used)",
+    "Added a Rust client to Inferex": "mentions unverified skill 'skill-rust' (draft)",
 }
 
 

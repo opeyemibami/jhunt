@@ -6,7 +6,8 @@ every reason that applies. It never rewords a claim. A claim is blocked if:
 
 1. it cites no fact;
 2. it cites a fact the bank doesn't have;
-3. a cited fact's latest version isn't verified (draft or retired);
+3. a cited fact's latest version isn't verified (draft or retired), or it
+   mentions a skill whose latest version isn't;
 4. it has a number, in digits or spelled out, that its cited facts don't;
 5. its words state a skill level above the level of a skill it cites or
    mentions: a skill can't borrow a level by citing another fact.
@@ -133,6 +134,18 @@ def _check(claim: Claim, facts: Mapping[str, FactVersion], levels: ClaimLevels) 
             problems.append(f"fact {fact_id!r} is {found.status}, not verified")
         else:
             cited.append(found)
+
+    # A skill the bank holds only as a draft, or has retired, can't be named
+    # either: naming it adds a skill (owner, PR 3.6a review). A cited one is
+    # already reported above.
+    for f in facts.values():
+        if (
+            f.kind == "skill"
+            and f.status != "verified"
+            and f.fact_id not in claim.fact_ids
+            and _mentions(claim.text, f)
+        ):
+            problems.append(f"mentions unverified skill {f.fact_id!r} ({f.status})")
 
     # Numbers: each must be in a cited fact, the same number with the same unit.
     supported = {n for f in cited for n in _numbers(f.text)}
