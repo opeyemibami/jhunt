@@ -27,6 +27,9 @@ jhunt-api = "jhunt.app.web:main"
 jhunt-submission = "jhunt.app.submission:main"
 jhunt-facts = "jhunt.app.facts:main"
 jhunt-pack = "jhunt.app.pack:main"
+jhunt-up = "jhunt.app.up:up_main"
+jhunt-down = "jhunt.app.up:down_main"
+jhunt-logs = "jhunt.app.up:logs_main"
 
 [build-system]
 requires = ["uv_build==0.13.1"]
