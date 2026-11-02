@@ -38,7 +38,7 @@ def draft(cv: list[tuple[str, list[str]]], note: list[tuple[str, list[str]]]) ->
     return json.dumps(
         {
             "cv_lines": [{"text": t, "fact_ids": i} for t, i in cv],
-            "cover_note": [{"text": t, "fact_ids": i} for t, i in note],
+            "cover_note": [{"text": t, "fact_ids": i, "group": "experience"} for t, i in note],
         }
     )
 

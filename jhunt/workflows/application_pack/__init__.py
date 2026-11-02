@@ -9,6 +9,8 @@ from jhunt.workflows.application_pack.pack import (
     PackReplyError,
     cover_note_text,
     load_pack_config,
+    note_paragraphs,
+    paragraphs,
 )
 from jhunt.workflows.application_pack.tool import draft_pack_tool
 
@@ -22,5 +24,7 @@ __all__ = [
     "cover_note_text",
     "draft_pack_tool",
     "load_pack_config",
+    "note_paragraphs",
+    "paragraphs",
     "thread_id_for",
 ]

@@ -52,7 +52,7 @@ Decisions:
 
 ## Evals (weeks 17 to 18)
 
-- **A meaning check for claims against their facts**: a judge model, or an eval set, that flags a claim whose meaning differs from what its cited facts say. Application 6's first draft turned "was a standard part" into "made … a standard part", which the validator (citations, numbers, level words) can't detect. It should also flag a cover-note sentence that doesn't stand alone. (Owner, review of the first real pack; ADRs 0015 and 0016)
+- **A meaning check for claims against their facts**: a judge model, or an eval set, that flags a claim whose meaning differs from what its cited facts say. Application 6's first draft turned "was a standard part" into "made … a standard part", which the validator (citations, numbers, level words) can't detect. It should also flag a cover-note sentence that doesn't stand alone. Until then, the drafting prompts have a rule against changing a fact's actor or verb strength (ADR 0016), asked for but not checked. (Owner, review of the first real pack; ADRs 0015 and 0016)
 
 ## Week 16
 

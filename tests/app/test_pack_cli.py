@@ -92,7 +92,8 @@ def test_a_stored_draft_prints_the_note_the_lines_and_what_was_blocked(engine: E
     drafted = {
         "cv_lines": [{"text": "Cut inference cost by 35% at Acme", "fact_ids": ["role-acme"]},
                      {"text": "Cut inference cost by 50% at Acme", "fact_ids": ["role-acme"]}],
-        "cover_note": [{"text": "At Acme I cut inference cost by 35%.", "fact_ids": ["role-acme"]}],
+        "cover_note": [{"text": "At Acme I cut inference cost by 35%.", "fact_ids": ["role-acme"],
+                        "group": "experience"}],
     }  # fmt: skip
 
     def model(request: ModelRequest) -> ModelResponse:

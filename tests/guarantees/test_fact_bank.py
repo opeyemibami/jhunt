@@ -177,7 +177,11 @@ def test_a_drafted_pack_stores_unsupported_claims_as_blocked_and_unchanged(bank:
             {"text": "Led a team of 12 at Acme", "fact_ids": []},
         ],
         "cover_note": [
-            {"text": "I ran Kubernetes in production at Acme", "fact_ids": ["role-acme"]},
+            {
+                "text": "I ran Kubernetes in production at Acme",
+                "fact_ids": ["role-acme"],
+                "group": "experience",
+            },
         ],
     }
 

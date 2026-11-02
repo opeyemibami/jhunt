@@ -19,7 +19,12 @@ from jhunt.app.registry import build_registry
 from jhunt.platform.config import get_settings
 from jhunt.platform.runtime.threads import ThreadExists, enqueue_start
 from jhunt.workflows import application_pack
-from jhunt.workflows.application_pack import PackConfig, cover_note_text, load_pack_config
+from jhunt.workflows.application_pack import (
+    PackConfig,
+    cover_note_text,
+    load_pack_config,
+    paragraphs,
+)
 
 WAIT_SECONDS = 300
 SECTION_NAMES = {"cover_note": "cover note", "cv_line": "CV line"}
@@ -92,7 +97,8 @@ def show_draft(engine: Engine, draft_id: int, config: PackConfig) -> str:
         ).one()
         claims = conn.execute(
             text(
-                "SELECT round, section, text, fact_ids, blocked, problems FROM draft_claims"
+                "SELECT round, section, text, fact_ids, blocked, problems, paragraph"
+                " FROM draft_claims"
                 " WHERE draft_id = :d ORDER BY round, section DESC, position"
             ),
             {"d": draft_id},
@@ -101,7 +107,7 @@ def show_draft(engine: Engine, draft_id: int, config: PackConfig) -> str:
     final = [c for c in claims if c.round == used]
     accepted = [c for c in final if not c.blocked]
     note = cover_note_text(
-        [c.text for c in accepted if c.section == "cover_note"],
+        paragraphs([(c.paragraph, c.text) for c in accepted if c.section == "cover_note"]),
         config,
         company=head.company,
         role=head.role,
