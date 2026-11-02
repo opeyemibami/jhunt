@@ -12,17 +12,17 @@ from jhunt.platform.artifacts.records import RETENTION_PERIOD
 
 
 @pytest.fixture
-def store(gcs_test_bucket: str) -> RecordStore:
-    return RecordStore(gcs_test_bucket)
+def store(gcs_test_bucket: str, gcs_client: storage.Client) -> RecordStore:
+    return RecordStore(gcs_test_bucket, gcs_client)
 
 
 def test_every_record_is_unlocked_for_three_years(
-    store: RecordStore, gcs_test_bucket: str, record_prefix: str
+    store: RecordStore, gcs_test_bucket: str, gcs_bucket: storage.Bucket, record_prefix: str
 ) -> None:
     before = dt.datetime.now(dt.UTC)
     rec = store.put(f"{record_prefix}a.txt", b"hello", "text/plain")
 
-    blob = storage.Client().bucket(gcs_test_bucket).get_blob(rec.key, generation=rec.generation)
+    blob = gcs_bucket.get_blob(rec.key, generation=rec.generation)
     assert blob is not None
     assert blob.retention.mode == "Unlocked"
     until = blob.retention.retain_until_time
@@ -42,14 +42,14 @@ def test_callers_cannot_choose_the_retention() -> None:
 
 
 def test_put_records_the_sha256_and_get_checks_it(
-    store: RecordStore, gcs_test_bucket: str, record_prefix: str
+    store: RecordStore, gcs_test_bucket: str, gcs_bucket: storage.Bucket, record_prefix: str
 ) -> None:
     rec = store.put(f"{record_prefix}a.txt", b"hello", "text/plain")
     assert rec.sha256 == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     assert rec.uri == f"gs://{gcs_test_bucket}/{record_prefix}a.txt"
     assert (rec.size, rec.generation > 0) == (5, True)
 
-    blob = storage.Client().bucket(gcs_test_bucket).get_blob(rec.key)
+    blob = gcs_bucket.get_blob(rec.key)
     assert blob is not None and blob.metadata == {"sha256": rec.sha256}
     assert store.get(rec.key, rec.generation, rec.sha256) == b"hello"
 
@@ -81,11 +81,11 @@ def test_put_or_adopt_keeps_the_first_object(store: RecordStore, record_prefix: 
 
 
 def test_adopt_computes_the_sha256_from_the_bytes_not_the_metadata(
-    store: RecordStore, gcs_test_bucket: str, record_prefix: str
+    store: RecordStore, gcs_test_bucket: str, gcs_bucket: storage.Bucket, record_prefix: str
 ) -> None:
     # An object whose metadata claims a wrong hash (written directly, as the app).
     key = f"{record_prefix}lying.html"
-    blob = storage.Client().bucket(gcs_test_bucket).blob(key)
+    blob = gcs_bucket.blob(key)
     blob.metadata = {"sha256": "0" * 64}
     blob.upload_from_string(b"real bytes", content_type="text/html", if_generation_match=0)
 
@@ -103,13 +103,15 @@ def test_existing_returns_the_live_record_or_none(store: RecordStore, record_pre
     assert found == (put, b"kept")
 
 
-def test_staging_put_or_adopt_and_get(gcs_test_bucket: str, record_prefix: str) -> None:
+def test_staging_put_or_adopt_and_get(
+    gcs_test_bucket: str, gcs_bucket: storage.Bucket, record_prefix: str
+) -> None:
     from jhunt.platform.artifacts import StagingStore
 
-    staging = StagingStore(gcs_test_bucket)
+    staging = StagingStore(gcs_test_bucket, gcs_bucket.client)
     first, data = staging.put_or_adopt(f"{record_prefix}board.json", b"[1]", "application/json")
     again, kept = staging.put_or_adopt(f"{record_prefix}board.json", b"[2]", "application/json")
     assert (again, kept, data) == (first, b"[1]", b"[1]")
     assert staging.get(first.key, first.generation, first.sha256) == b"[1]"
-    blob = storage.Client().bucket(gcs_test_bucket).get_blob(first.key)
+    blob = gcs_bucket.get_blob(first.key)
     assert blob is not None and blob.retention.mode is None  # staging carries no retention

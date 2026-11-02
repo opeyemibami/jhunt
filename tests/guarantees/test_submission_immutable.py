@@ -37,11 +37,15 @@ KEY = "d" * 64
 
 
 @pytest.fixture
-def stored(tmp_path: Path, gcs_test_bucket: str, record_prefix: str) -> dict[str, Any]:
+def stored(
+    tmp_path: Path, gcs_test_bucket: str, gcs_client: storage.Client, record_prefix: str
+) -> dict[str, Any]:
     """A submitted file, kept the way jhunt-submission keeps it."""
     cv = tmp_path / "cv.pdf"
     cv.write_bytes(SENT)
-    tool = store_submission_file_tool(RecordStore(gcs_test_bucket), prefix=record_prefix)
+    tool = store_submission_file_tool(
+        RecordStore(gcs_test_bucket, gcs_client), prefix=record_prefix
+    )
     return tool.run(
         {
             "path": str(cv),
@@ -54,14 +58,15 @@ def stored(tmp_path: Path, gcs_test_bucket: str, record_prefix: str) -> dict[str
 
 
 @pytest.fixture
-def blob(gcs_test_bucket: str, stored: dict[str, Any]) -> storage.Blob:
-    found = storage.Client().bucket(gcs_test_bucket).get_blob(stored["key"])
+def blob(gcs_bucket: storage.Bucket, stored: dict[str, Any]) -> storage.Blob:
+    found = gcs_bucket.get_blob(stored["key"])
     assert found is not None
     return found
 
 
-def unchanged(gcs_test_bucket: str, stored: dict[str, Any]) -> bool:
-    data = RecordStore(gcs_test_bucket).get(stored["key"], stored["generation"], stored["sha256"])
+def unchanged(gcs_bucket: storage.Bucket, stored: dict[str, Any]) -> bool:
+    store = RecordStore(gcs_bucket.name, gcs_bucket.client)
+    data = store.get(stored["key"], stored["generation"], stored["sha256"])
     return data == SENT
 
 
@@ -72,22 +77,24 @@ def test_the_file_carries_the_records_retention(blob: storage.Blob) -> None:
     assert until > dt.datetime.now(dt.UTC) + RETENTION_PERIOD - dt.timedelta(days=1)
 
 
-def test_delete_fails(gcs_test_bucket: str, stored: dict[str, Any], blob: storage.Blob) -> None:
+def test_delete_fails(
+    gcs_bucket: storage.Bucket, stored: dict[str, Any], blob: storage.Blob
+) -> None:
     with pytest.raises(Forbidden):
         blob.delete()
-    assert unchanged(gcs_test_bucket, stored)
+    assert unchanged(gcs_bucket, stored)
 
 
-def test_overwrite_fails(gcs_test_bucket: str, stored: dict[str, Any]) -> None:
+def test_overwrite_fails(gcs_bucket: storage.Bucket, stored: dict[str, Any]) -> None:
     # Replacing an object needs storage.objects.delete, which the app lacks.
-    replacement = storage.Client().bucket(gcs_test_bucket).blob(stored["key"])
+    replacement = gcs_bucket.blob(stored["key"])
     with pytest.raises(Forbidden):
         replacement.upload_from_string(b"%PDF another CV", content_type="application/pdf")
-    assert unchanged(gcs_test_bucket, stored)
+    assert unchanged(gcs_bucket, stored)
 
 
 def test_retention_cannot_be_shortened_or_cleared(
-    gcs_test_bucket: str, stored: dict[str, Any], blob: storage.Blob
+    gcs_bucket: storage.Bucket, stored: dict[str, Any], blob: storage.Blob
 ) -> None:
     blob.retention.retain_until_time = dt.datetime.now(dt.UTC) + dt.timedelta(days=1)
     with pytest.raises(Forbidden):
@@ -98,7 +105,7 @@ def test_retention_cannot_be_shortened_or_cleared(
     blob.retention.retain_until_time = None
     with pytest.raises(Forbidden):
         blob.patch(override_unlocked_retention=True)
-    assert unchanged(gcs_test_bucket, stored)
+    assert unchanged(gcs_bucket, stored)
 
 
 def test_hold_cannot_be_set(blob: storage.Blob) -> None:
@@ -107,9 +114,10 @@ def test_hold_cannot_be_set(blob: storage.Blob) -> None:
         blob.patch()
 
 
-def test_hash_mismatch_is_detected(gcs_test_bucket: str, stored: dict[str, Any]) -> None:
+def test_hash_mismatch_is_detected(gcs_bucket: storage.Bucket, stored: dict[str, Any]) -> None:
+    store = RecordStore(gcs_bucket.name, gcs_bucket.client)
     with pytest.raises(RecordIntegrityError):
-        RecordStore(gcs_test_bucket).get(stored["key"], stored["generation"], "f" * 64)
+        store.get(stored["key"], stored["generation"], "f" * 64)
 
 
 @pytest.fixture

@@ -29,8 +29,8 @@ def tool_for(site: Site, store: RecordStore, http: httpx.Client, prefix: str):  
     return snapshot_posting_tool(store, http, prefix=prefix, apis=apis)
 
 
-def stored(bucket: str, prefix: str) -> list[str]:
-    return [b.name for b in storage.Client().list_blobs(bucket, prefix=prefix)]
+def stored(bucket: storage.Bucket, prefix: str) -> list[str]:
+    return [b.name for b in bucket.client.list_blobs(bucket, prefix=prefix)]
 
 
 @pytest.mark.parametrize(
@@ -84,18 +84,26 @@ def test_a_valid_greenhouse_job_is_read_from_the_api(
 
 
 def test_a_missing_greenhouse_job_is_refused(
-    site: Site, store: RecordStore, http: httpx.Client, gcs_test_bucket: str, record_prefix: str
+    site: Site,
+    store: RecordStore,
+    http: httpx.Client,
+    gcs_bucket: storage.Bucket,
+    record_prefix: str,
 ) -> None:
     # The real bug: jobs/4567890 didn't exist, its page redirected to the board.
     with pytest.raises(FetchFailed, match="job not found"):
         tool_for(site, store, http, record_prefix).run(
             {"url": "https://job-boards.greenhouse.io/acme/jobs/4567890", "dedupe_key": KEY}
         )
-    assert stored(gcs_test_bucket, record_prefix) == []
+    assert stored(gcs_bucket, record_prefix) == []
 
 
 def test_an_ashby_job_is_read_from_the_posting_api(
-    site: Site, store: RecordStore, http: httpx.Client, gcs_test_bucket: str, record_prefix: str
+    site: Site,
+    store: RecordStore,
+    http: httpx.Client,
+    gcs_bucket: storage.Bucket,
+    record_prefix: str,
 ) -> None:
     job_id = "0b1e8f0a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
     board = {
@@ -155,7 +163,11 @@ def test_a_lever_job_is_read_from_the_postings_api(
 
 
 def test_a_redirect_to_another_path_is_refused(
-    site: Site, store: RecordStore, http: httpx.Client, gcs_test_bucket: str, record_prefix: str
+    site: Site,
+    store: RecordStore,
+    http: httpx.Client,
+    gcs_bucket: storage.Bucket,
+    record_prefix: str,
 ) -> None:
     long_page = f"<html><body>{DESCRIPTION}</body></html>".encode()
     site.pages["careers"] = (200, long_page)  # the careers page passes the 500-char guard
@@ -167,7 +179,7 @@ def test_a_redirect_to_another_path_is_refused(
         tool_for(site, store, http, record_prefix).run(
             {"url": site.url("careers/jobs/987"), "dedupe_key": KEY}
         )
-    assert stored(gcs_test_bucket, record_prefix) == []
+    assert stored(gcs_bucket, record_prefix) == []
 
 
 def test_a_redirect_that_keeps_the_path_is_fine(
@@ -246,7 +258,11 @@ def test_an_embedded_ashby_board_is_read_from_its_api(
 
 
 def test_an_embedded_job_whose_board_cant_be_found_is_refused(
-    site: Site, store: RecordStore, http: httpx.Client, gcs_test_bucket: str, record_prefix: str
+    site: Site,
+    store: RecordStore,
+    http: httpx.Client,
+    gcs_bucket: storage.Bucket,
+    record_prefix: str,
 ) -> None:
     # A careers page long enough to pass the page guard, with no board in it:
     # it must not be kept as the job (no fallback to the page).
@@ -258,7 +274,7 @@ def test_an_embedded_job_whose_board_cant_be_found_is_refused(
         tool_for(site, store, http, record_prefix).run(
             {"url": site.url(f"careers?ashby_jid={ASHBY_JID}"), "dedupe_key": KEY}
         )
-    assert stored(gcs_test_bucket, record_prefix) == []
+    assert stored(gcs_bucket, record_prefix) == []
 
 
 def test_a_page_naming_two_different_boards_is_refused(

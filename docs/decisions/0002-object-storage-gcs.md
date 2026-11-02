@@ -80,6 +80,16 @@ The command runs as the owner's gcloud login, using a short-lived token from `gc
 
 After that, each generation is soft-deleted and recoverable for 30 days. That's intended: it is the undo window. `check-objectstore.sh` cleans up its own test records this way.
 
+## Timeouts
+
+Every storage call in `jhunt.platform.artifacts` passes `TIMEOUT = (10, 30)`: 10 s to connect and 30 s to read. The library's default is 60 s. The idempotent calls also pass the library's own retry policy, capped at 60 s in all (`RETRY`). Those are reads, listings, the create-only upload and delete by generation. A `patch` names no generation, so it gets the timeout but no retry. The credential refresh before a call uses the call's timeout too, so a stalled token endpoint is bounded the same way.
+
+**Why** (PR after 3.6a; owner): the risk isn't that a worker loses its lease. Its heartbeat keeps extending the lease while a step runs (`test_heartbeat_keeps_the_lease_during_a_long_step`). The risk is the opposite.
+- **Without a timeout**, a stalled call can hang forever while the heartbeat keeps the lease alive. The run never finishes and never fails. It blocks its thread, and nothing recovers it, because lease expiry, the only recovery, never comes.
+- **With timeouts**, a stall becomes a normal failure. The library retries it within the cap. If it still fails, the step raises, the run fails with the error, and a re-run is safe because every storage write is create-only and adopted.
+
+The stall that showed this was a token refresh hanging for 60 s on a dropped connection, during the tests (PR 3.6a). `tests/platform/artifacts/test_timeouts.py` proves the bound. It points the stores at a local server that accepts connections and never answers, then checks that each call fails within seconds, with the constants shortened. It checks a stalled credential refresh the same way. The tests share one storage client per session, so they refresh one token instead of one per test.
+
 ## Residual risk
 
 `setRetention` lets an upload carry any retention configuration. IAM can't limit the mode or the date. A bug in `jhunt.platform.artifacts` could therefore write a record in **Locked** mode, or with a retain-until far in the future. The record would stay safe, but the owner couldn't delete it until that date, which breaks "one command deletes everything for an application". The mitigations:
