@@ -113,8 +113,8 @@ def logs_main() -> None:
         return
     try:
         while True:
-            for name, handle in files.items():
-                for line in handle.readlines():
+            for name, followed in files.items():
+                for line in followed.readlines():
                     print(f"{name:<{width}} | {line}", end="", flush=True)
             time.sleep(0.5)
     except KeyboardInterrupt:
