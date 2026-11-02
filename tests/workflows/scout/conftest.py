@@ -6,14 +6,15 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
+from google.cloud import storage
 from sqlalchemy import URL, Engine, create_engine, pool
 
 from jhunt.platform.artifacts import StagingStore
 
 
 @pytest.fixture
-def staging(gcs_test_bucket: str) -> StagingStore:
-    return StagingStore(gcs_test_bucket)
+def staging(gcs_test_bucket: str, gcs_client: storage.Client) -> StagingStore:
+    return StagingStore(gcs_test_bucket, gcs_client)
 
 
 @pytest.fixture

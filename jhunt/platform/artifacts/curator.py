@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from google.cloud import storage
 from google.oauth2.credentials import Credentials
 
+from jhunt.platform.artifacts import records
+
 
 @dataclass(frozen=True)
 class Generation:
@@ -52,7 +54,9 @@ def list_generations(bucket_name: str, prefix: str, client: storage.Client) -> l
     check_prefix(prefix)
     return [
         Generation(blob.name, blob.generation, blob.time_deleted is None)
-        for blob in client.list_blobs(bucket_name, prefix=prefix, versions=True)
+        for blob in client.list_blobs(
+            bucket_name, prefix=prefix, versions=True, timeout=records.TIMEOUT, retry=records.RETRY
+        )
         if blob.generation is not None
     ]
 
@@ -72,17 +76,17 @@ def delete_all_generations(
     deleted = []
     for gen in list_generations(bucket_name, prefix, client):
         blob = bucket.blob(gen.name, generation=gen.generation)
-        blob.reload()
+        blob.reload(timeout=records.TIMEOUT, retry=records.RETRY)
         # The app can't set holds, but the owner can, and a held object can't
         # be deleted. Release both kinds first.
         if blob.temporary_hold or blob.event_based_hold:
             blob.temporary_hold = False
             blob.event_based_hold = False
-            blob.patch()
+            blob.patch(timeout=records.TIMEOUT)  # no retry: a patch isn't idempotent
         if blob.retention.mode is not None:
             blob.retention.mode = None
             blob.retention.retain_until_time = None
-            blob.patch(override_unlocked_retention=True)
-        blob.delete()
+            blob.patch(override_unlocked_retention=True, timeout=records.TIMEOUT)
+        blob.delete(timeout=records.TIMEOUT, retry=records.RETRY)  # by generation: idempotent
         deleted.append(gen)
     return deleted

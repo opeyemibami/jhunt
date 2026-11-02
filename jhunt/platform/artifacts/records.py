@@ -17,12 +17,20 @@ from dataclasses import dataclass
 
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 # Unlocked: the owner can still remove an object's retention to delete one
 # application's records. Locked would make that impossible until the date.
 RETENTION_MODE = "Unlocked"
 # Three years, counting one leap day.
 RETENTION_PERIOD = dt.timedelta(days=3 * 365 + 1)
+
+# Every call to storage gets these (connect, read) timeouts in seconds. The
+# token refresh before a call uses the same ones, so a stalled network fails
+# a call in seconds instead of the library's 60 (the stall seen in PR 3.6a).
+TIMEOUT = (10.0, 30.0)
+# The library's retry for idempotent calls, ending after 60 s in all.
+RETRY = DEFAULT_RETRY.with_timeout(60.0)
 
 
 class RecordExists(Exception):
@@ -68,7 +76,15 @@ class _Store:
         try:
             # if_generation_match=0: create only. The upload fails if any live
             # object has this name, so a record is never silently replaced.
-            blob.upload_from_string(data, content_type=content_type, if_generation_match=0)
+            # Create-only makes a retried upload safe: a second attempt after a
+            # first that succeeded gets PreconditionFailed, never a replacement.
+            blob.upload_from_string(
+                data,
+                content_type=content_type,
+                if_generation_match=0,
+                timeout=TIMEOUT,
+                retry=RETRY,
+            )
         except PreconditionFailed:
             raise RecordExists(f"gs://{self._bucket.name}/{key}") from None
         if blob.generation is None:  # GCS always returns it; never write a row without it
@@ -106,10 +122,12 @@ class _Store:
         Same rule as adopting: the generation comes from storage and the
         sha256 from the downloaded bytes, never from metadata.
         """
-        blob = self._bucket.get_blob(key)  # the live generation, or None
+        blob = self._bucket.get_blob(key, timeout=TIMEOUT, retry=RETRY)  # live, or None
         if blob is None or blob.generation is None:
             return None
-        data: bytes = self._bucket.blob(key, generation=blob.generation).download_as_bytes()
+        data: bytes = self._bucket.blob(key, generation=blob.generation).download_as_bytes(
+            timeout=TIMEOUT, retry=RETRY
+        )
         record = StoredRecord(
             uri=f"gs://{self._bucket.name}/{key}",
             key=key,
@@ -121,7 +139,9 @@ class _Store:
 
     def get(self, key: str, generation: int, expected_sha256: str) -> bytes:
         """Read exactly this generation of a record and check its sha256."""
-        data: bytes = self._bucket.blob(key, generation=generation).download_as_bytes()
+        data: bytes = self._bucket.blob(key, generation=generation).download_as_bytes(
+            timeout=TIMEOUT, retry=RETRY
+        )
         actual = hashlib.sha256(data).hexdigest()
         if actual != expected_sha256:
             raise RecordIntegrityError(

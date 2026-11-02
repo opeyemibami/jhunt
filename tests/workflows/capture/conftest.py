@@ -5,13 +5,14 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
+from google.cloud import storage
 
 from jhunt.platform.artifacts import RecordStore
 
 
 @pytest.fixture
-def store(gcs_test_bucket: str) -> RecordStore:
-    return RecordStore(gcs_test_bucket)
+def store(gcs_test_bucket: str, gcs_client: storage.Client) -> RecordStore:
+    return RecordStore(gcs_test_bucket, gcs_client)
 
 
 @pytest.fixture

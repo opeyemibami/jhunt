@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from google.cloud import storage
 from sqlalchemy import URL, create_engine, pool, text
 
 from jhunt.platform.config import Settings, get_settings
@@ -40,6 +41,22 @@ def gcs_test_bucket() -> str:
     if not name:
         pytest.fail("GCS_TEST_BUCKET is not set: storage tests need the real CI bucket")
     return name
+
+
+@pytest.fixture(scope="session")
+def gcs_client() -> Iterator[storage.Client]:
+    """One storage client for the whole session (per xdist worker). Each new
+    client refreshes its own token, and a refresh is a network call that can
+    stall: one client means one refresh, not one per test."""
+    client = storage.Client()
+    yield client
+    client.close()
+
+
+@pytest.fixture(scope="session")
+def gcs_bucket(gcs_client: storage.Client, gcs_test_bucket: str) -> storage.Bucket:
+    """The CI bucket, through the shared client."""
+    return gcs_client.bucket(gcs_test_bucket)
 
 
 @pytest.fixture
