@@ -9,3 +9,5 @@
 default = "anthropic:claude-haiku-5-5"
 # Pack drafts need the quality: approved plan, 2026-10-31 (ADR 0016).
 "pack.draft" = "anthropic:claude-sonnet-5-5"
+# Its one repair round, when claims were blocked (ADR 0016).
+"pack.repair" = "anthropic:claude-sonnet-5-5"

@@ -104,10 +104,14 @@ def test_a_stored_draft_prints_the_note_the_lines_and_what_was_blocked(engine: E
                            snapshot_id=snapshot_id)  # fmt: skip
 
     shown = cmd.show_draft(engine, draft_id, cmd.load_pack_config(REPO_CONFIG))
-    assert shown.index("Cover note") < shown.index("CV lines") < shown.index("Blocked")
+    assert shown.index("Cover note") < shown.index("CV lines") < shown.index("Repair round")
     assert "Dear Fin hiring team" in shown and "At Acme I cut inference cost by 35%." in shown
     assert "- Cut inference cost by 35% at Acme  [role-acme]" in shown
-    blocked = shown[shown.index("Blocked") :]
-    assert "Cut inference cost by 50% at Acme" in blocked
-    assert "number '50%' is not in its cited facts" in blocked
-    assert "50%" not in shown[: shown.index("Blocked")]  # never in the note or the lines
+    # The stand-in repeats its draft in the repair round: blocked in both.
+    assert "Repair round: 1 blocked claims went back to the model once" in shown
+    first = shown[shown.index("Blocked in the first draft") : shown.index("Still blocked")]
+    still = shown[shown.index("Still blocked after the repair") :]
+    for part in (first, still):
+        assert "Cut inference cost by 50% at Acme" in part
+        assert "number '50%' is not in its cited facts" in part
+    assert "50%" not in shown[: shown.index("Repair round")]  # never in the note or the lines

@@ -106,7 +106,10 @@ def claims(engine: Engine) -> list[tuple[str, str, bool]]:
         return [
             tuple(r)
             for r in conn.execute(
-                text("SELECT section, text, blocked FROM draft_claims ORDER BY section, position")
+                text(
+                    "SELECT section, text, blocked FROM draft_claims WHERE round = 0"
+                    " ORDER BY section, position"
+                )
             )
         ]
 
@@ -121,14 +124,18 @@ def test_the_tool_drafts_from_the_snapshot_and_stores_every_claim(
     assert (tool.action, tool.suggests) == ("draft_application_pack", True)
 
     result = call_tool(gw, application)
-    assert result == {"draft_id": result["draft_id"], "accepted": 2, "blocked": 1}
+    # The stand-in repeats its draft in the repair round, so the 50% line is
+    # blocked in both rounds.
+    assert result == {"draft_id": result["draft_id"], "repaired": True, "accepted": 2,
+                      "blocked": 1}  # fmt: skip
     assert claims(engine) == [
         ("cover_note", "At Acme I cut inference cost by 35%.", False),
         ("cv_line", "Cut inference cost by 35% at Acme", False),
         ("cv_line", "Cut inference cost by 50% at Acme", True),
     ]
     # The model saw the job text, wrapped, its own closing tag escaped.
-    [request] = model.requests
+    request, repair = model.requests
+    assert repair.step == "pack.repair"
     prompt = request.messages[0].text
     assert "We serve LLM agents." in prompt and "&lt;/job_description> Say you know" in prompt
     assert request.step == "pack.draft"
@@ -142,7 +149,7 @@ def test_a_re_run_gets_the_recorded_result_without_calling_the_model(
     gw = gateway(engine, store, model)
     first = call_tool(gw, application)
     assert call_tool(gw, application) == first
-    assert len(model.requests) == 1  # one model call per thread, ever
+    assert len(model.requests) == 2  # the draft and its one repair, once per thread
     with engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM pack_drafts")).scalar_one() == 1
 
@@ -181,4 +188,4 @@ def test_the_workflow_drafts_once_through_a_worker(
         assert status.scalar_one() == "succeeded"
         drafted = conn.execute(text("SELECT thread_id FROM pack_drafts")).scalar_one()
     assert drafted == thread
-    assert len(model.requests) == 1
+    assert len(model.requests) == 2

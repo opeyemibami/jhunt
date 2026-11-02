@@ -110,11 +110,11 @@ def test_every_claim_is_checked_and_blocked_ones_are_kept_as_drafted() -> None:
           "fact_ids": ["skill-k8s", "role-acme"]}],
     )  # fmt: skip
     draft = draft_pack(model_returning(body, seen), FACTS, JOB, load_claim_levels(REPO_CONFIG))
-    assert len(seen) == 1
-    cv = draft.sections["cv_line"]
+    assert len(seen) == 2  # blocked claims: one repair round (here the same reply)
+    cv = draft.rounds[0]["cv_line"]
     assert [c.text for c in cv.accepted] == ["Cut inference cost by 35% at Acme"]
     assert [c.text for c in cv.blocked] == ["Cut inference cost by 40% at Acme", "10 years of Rust"]
-    assert [c.text for c in draft.sections["cover_note"].accepted] == [
+    assert [c.text for c in draft.rounds[0]["cover_note"].accepted] == [
         "I used Kubernetes to serve models at Acme"
     ]
     assert draft.record.model == "claude-sonnet-5-5"
@@ -124,7 +124,7 @@ def test_the_cover_note_is_framed_by_the_fixed_opening_and_closing() -> None:
     body = reply([], [{"text": "I cut inference cost by 35% at Acme.", "fact_ids": ["role-acme"]},
                       {"text": "I led 40 engineers.", "fact_ids": ["role-acme"]}])  # fmt: skip
     draft = draft_pack(model_returning(body, []), FACTS, JOB, load_claim_levels(REPO_CONFIG))
-    accepted = [c.text for c in draft.sections["cover_note"].accepted]
+    accepted = [c.text for c in draft.final["cover_note"].accepted]
     note = cover_note_text(
         accepted, load_pack_config(REPO_CONFIG), company="Fin", role="AI Engineer"
     )
@@ -188,7 +188,7 @@ def test_a_draft_is_stored_once_with_every_claim(engine: Engine) -> None:
         claims = conn.execute(
             text(
                 "SELECT section, position, text, fact_ids, fact_versions, blocked, problems"
-                " FROM draft_claims ORDER BY section, position"
+                " FROM draft_claims WHERE round = 0 ORDER BY section, position"
             )
         ).all()
     assert tuple(row) == (application_id, "pack-1-1", "claude-sonnet-5-5")

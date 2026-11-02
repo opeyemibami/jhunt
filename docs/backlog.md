@@ -50,6 +50,10 @@ Decisions:
 
 - Database roles: the app connects as `POSTGRES_USER`, a superuser that owns the tables, so it could disable the append-only triggers (`ALTER TABLE ... DISABLE TRIGGER`, or `session_replication_role`). Split into two roles. `jhunt_owner` runs migrations and owns the tables. `jhunt_app` is used at runtime, with SELECT and INSERT on the append-only tables, plus UPDATE on `applications` for the changeable columns only (stage, outcome, notes, closed_at, thread_id, chat_thread_id), and no ownership or superuser. The owner delete command runs as `jhunt_owner`. Then remove the limit from ADR 0007. (PR 2.3 review)
 
+## Evals (weeks 17 to 18)
+
+- **A meaning check for claims against their facts**: a judge model, or an eval set, that flags a claim whose meaning differs from what its cited facts say. Application 6's first draft turned "was a standard part" into "made … a standard part", which the validator (citations, numbers, level words) can't detect. It should also flag a cover-note sentence that doesn't stand alone. (Owner, review of the first real pack; ADRs 0015 and 0016)
+
 ## Week 16
 
 - Confirm with a real cached call whether OpenAI's input_tokens includes cache_write_tokens (ADR 0003 assumes yes). (PR 4b review)
