@@ -84,6 +84,21 @@ class GcpSettings(BaseSettings):
     gcp_project: str
 
 
+class LocalSettings(BaseSettings):
+    """Only what jhunt-up, jhunt-down and jhunt-logs need (ADR 0017): where
+    they keep PIDs and logs, and the web app's port."""
+
+    model_config = SettingsConfigDict(env_file=None, extra="ignore", frozen=True)
+
+    jhunt_state_dir: Path = Path(".jhunt")  # git-ignored
+    jhunt_api_port: int = 8000
+
+
+@lru_cache(maxsize=1)
+def get_local_settings() -> LocalSettings:
+    return LocalSettings()
+
+
 @lru_cache(maxsize=1)
 def get_gcp_settings() -> GcpSettings:
     return GcpSettings()  # type: ignore[call-arg]  # fields come from the environment

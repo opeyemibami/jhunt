@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .import_linter_cache/
+
+# jhunt-up's PIDs and logs (ADR 0017)
+.jhunt/
