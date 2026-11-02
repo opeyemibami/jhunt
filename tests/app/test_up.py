@@ -1,9 +1,11 @@
 """jhunt-up, jhunt-down and jhunt-logs, against real processes (ADR 0017).
 
-jhunt-up starts the database, migrates, then starts a real jhunt-worker and
-jhunt-api in the background on a scratch database, a free port and a state
-folder of the test's own; jhunt-down stops them. Never the developer's
-database or a real port.
+Each test has its own compose project (jhunt-test-<id>), so its own Postgres
+container on a free port, removed with its volume afterwards; its own web
+port; and its own state folder. jhunt-up starts that database, migrates it,
+then starts a real jhunt-worker and jhunt-api. Never the developer's compose
+project, database or port: the compose guard (tests/compose_guard.py)
+refuses anything else.
 """
 
 import os
@@ -13,12 +15,12 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import URL
 
 TIMEOUT = 120
 
@@ -37,14 +39,24 @@ def free_port() -> int:
 
 
 @pytest.fixture
-def env(migrated_db_url: URL, gcs_test_bucket: str, tmp_path: Path) -> dict[str, str]:
-    return os.environ | {
-        "POSTGRES_DB": str(migrated_db_url.database),
+def env(gcs_test_bucket: str, tmp_path: Path) -> Iterator[dict[str, str]]:
+    test_env = os.environ | {
+        # A compose project of the test's own: its own database container.
+        "COMPOSE_PROJECT_NAME": f"jhunt-test-{uuid.uuid4().hex[:8]}",
+        "POSTGRES_HOST": "127.0.0.1",
+        "POSTGRES_PORT": str(free_port()),
+        "POSTGRES_DB": "jhunt_test",
         "GCS_RECORDS_BUCKET": gcs_test_bucket,
         "GCS_STAGING_BUCKET": gcs_test_bucket,
         "JHUNT_API_PORT": str(free_port()),
         "JHUNT_STATE_DIR": str(tmp_path / "state"),
     }
+    yield test_env
+    # The test's container and its volume go; nothing else is touched.
+    subprocess.run(
+        ["docker", "compose", "down", "-v", "--remove-orphans"],
+        env=test_env, capture_output=True, timeout=TIMEOUT, check=False,
+    )  # fmt: skip
 
 
 def run(name: str, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
@@ -96,22 +108,37 @@ def test_up_starts_the_worker_and_the_web_app_with_logs_in_one_place(
     assert any(line.startswith("web    | ") for line in shown.stdout.splitlines())
 
 
-def database_container() -> str:
+def database_container(env: dict[str, str]) -> str:
     found = subprocess.run(
-        ["docker", "compose", "ps", "-q", "db"], capture_output=True, text=True, check=True
-    )
+        ["docker", "compose", "ps", "-q", "db"], env=env, capture_output=True, text=True,
+        check=True,
+    )  # fmt: skip
     return found.stdout.strip()
 
 
 def test_up_uses_the_running_database_as_it_is(env: dict[str, str]) -> None:
-    # The test's POSTGRES_DB differs from the container's. jhunt-up must not
-    # recreate the container for that: it would drop every connection to the
-    # developer's database (it did, once, before --no-recreate).
-    before = database_container()
+    # The test's own database container, already running, then started again
+    # with a different environment: jhunt-up must use it as it is, not
+    # recreate it, which drops every connection (it once did, to the
+    # developer's database, before --no-recreate).
+    started = subprocess.run(
+        ["docker", "compose", "up", "-d", "--wait", "db"], env=env, capture_output=True,
+        timeout=TIMEOUT, check=True,
+    )  # fmt: skip
+    assert started.returncode == 0
+    before = database_container(env)
+    # A database the app can use, under a name the container wasn't created
+    # with: compose sees a different environment.
+    subprocess.run(
+        ["docker", "compose", "exec", "-T", "db", "createdb", "-U", env["POSTGRES_USER"],
+         "jhunt_test_other"],
+        env=env, capture_output=True, timeout=TIMEOUT, check=True,
+    )  # fmt: skip
+    env = env | {"POSTGRES_DB": "jhunt_test_other"}
     result = run("jhunt-up", env)
     try:
         assert result.returncode == 0, result.stdout + result.stderr
-        assert database_container() == before
+        assert database_container(env) == before
     finally:
         run("jhunt-down", env)
 

@@ -1,9 +1,11 @@
 """Shared fixtures. Database tests use the local Postgres from docker-compose.yml."""
 
 import os
+import subprocess
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -12,10 +14,28 @@ from google.cloud import storage
 from sqlalchemy import URL, create_engine, pool, text
 
 from jhunt.platform.config import Settings, get_settings
+from tests.compose_guard import check as compose_guard_check
 from tests.runtime.lease_watch import LeaseWatch
 
 # The `site` fixture: a local web server whose pages a test can change.
 pytest_plugins = ["tests.runtime.local_site"]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def compose_guard() -> Iterator[None]:
+    """Every process a test starts goes through the compose guard first: no
+    test can run docker compose, jhunt-up or jhunt-down on the developer's
+    compose project (tests/compose_guard.py)."""
+    real_init = subprocess.Popen.__init__
+
+    def guarded(self: subprocess.Popen[Any], args: Any, *rest: Any, **kwargs: Any) -> None:
+        env = kwargs.get("env")
+        compose_guard_check(args, os.environ if env is None else env)
+        real_init(self, args, *rest, **kwargs)
+
+    subprocess.Popen.__init__ = guarded  # type: ignore[method-assign]
+    yield
+    subprocess.Popen.__init__ = real_init  # type: ignore[method-assign]
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
