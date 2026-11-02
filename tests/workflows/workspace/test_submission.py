@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from google.cloud import storage
 from sqlalchemy import URL, Engine, create_engine, pool, text
 from sqlalchemy.exc import IntegrityError
 
@@ -56,9 +57,9 @@ def file_args(path: Path, prefix_key: str = KEY) -> dict[str, Any]:
 
 
 def test_a_file_is_stored_create_only_under_its_sha256(
-    tmp_path: Path, gcs_test_bucket: str, record_prefix: str
+    tmp_path: Path, gcs_test_bucket: str, gcs_client: storage.Client, record_prefix: str
 ) -> None:
-    store = RecordStore(gcs_test_bucket)
+    store = RecordStore(gcs_test_bucket, gcs_client)
     cv = tmp_path / "cv.pdf"
     cv.write_bytes(b"%PDF my cv")
     tool = store_submission_file_tool(store, prefix=record_prefix)
@@ -72,14 +73,16 @@ def test_a_file_is_stored_create_only_under_its_sha256(
 
 
 def test_a_file_changed_after_confirming_is_refused(
-    tmp_path: Path, gcs_test_bucket: str, record_prefix: str
+    tmp_path: Path, gcs_test_bucket: str, gcs_client: storage.Client, record_prefix: str
 ) -> None:
     cv = tmp_path / "cv.pdf"
     cv.write_bytes(b"%PDF confirmed")
     args = file_args(cv)
     cv.write_bytes(b"%PDF edited after the owner confirmed")
     with pytest.raises(SubmissionFileChanged):
-        store_submission_file_tool(RecordStore(gcs_test_bucket), prefix=record_prefix).run(args)
+        store_submission_file_tool(
+            RecordStore(gcs_test_bucket, gcs_client), prefix=record_prefix
+        ).run(args)
 
 
 @pytest.mark.parametrize(
@@ -87,11 +90,17 @@ def test_a_file_changed_after_confirming_is_refused(
     [{"file_name": "../cv.pdf"}, {"file_name": ""}, {"dedupe_key": "x/y"}, {"sha256": "nothex"}],
 )
 def test_arguments_that_become_the_object_name_are_checked(
-    tmp_path: Path, gcs_test_bucket: str, record_prefix: str, change: dict[str, str]
+    tmp_path: Path,
+    gcs_test_bucket: str,
+    gcs_client: storage.Client,
+    record_prefix: str,
+    change: dict[str, str],
 ) -> None:
     cv = tmp_path / "cv.pdf"
     cv.write_bytes(b"%PDF")
-    tool = store_submission_file_tool(RecordStore(gcs_test_bucket), prefix=record_prefix)
+    tool = store_submission_file_tool(
+        RecordStore(gcs_test_bucket, gcs_client), prefix=record_prefix
+    )
     with pytest.raises(ValueError):
         tool.run(file_args(cv) | change)
 
@@ -225,12 +234,21 @@ def test_submission_rows_never_change(engine: Engine, application: int, table: s
 
 
 def test_the_gateway_runs_the_file_tool_at_level_1(
-    engine: Engine, tmp_path: Path, gcs_test_bucket: str, record_prefix: str
+    engine: Engine,
+    tmp_path: Path,
+    gcs_test_bucket: str,
+    gcs_client: storage.Client,
+    record_prefix: str,
 ) -> None:
     cv = tmp_path / "cv.pdf"
     cv.write_bytes(b"%PDF")
     gateway = ToolGateway(
-        engine, [store_submission_file_tool(RecordStore(gcs_test_bucket), prefix=record_prefix)]
+        engine,
+        [
+            store_submission_file_tool(
+                RecordStore(gcs_test_bucket, gcs_client), prefix=record_prefix
+            )
+        ],
     )
     result = gateway.call("submission-1-1", "store", "cv", "store_submission_file",
                           file_args(cv), run_id=None)  # fmt: skip

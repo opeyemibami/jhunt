@@ -76,8 +76,8 @@ def count(engine: Engine, table: str) -> int:
         return int(conn.execute(text(f"SELECT count(*) FROM {table}")).scalar_one())
 
 
-def stored(bucket: str, prefix: str) -> list[str]:
-    return sorted(b.name for b in storage.Client().list_blobs(bucket, prefix=prefix))
+def stored(bucket: storage.Bucket, prefix: str) -> list[str]:
+    return sorted(b.name for b in bucket.client.list_blobs(bucket, prefix=prefix))
 
 
 def args_for(application: int, files: dict[str, Path]) -> list[str]:
@@ -87,7 +87,7 @@ def args_for(application: int, files: dict[str, Path]) -> list[str]:
 
 def test_records_the_files_once_the_id_is_typed(
     engine: Engine, application: int, files: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], gcs_test_bucket: str, record_prefix: str,
+    capsys: pytest.CaptureFixture[str], gcs_bucket: storage.Bucket, record_prefix: str,
 ) -> None:  # fmt: skip
     out = run(monkeypatch, capsys, *args_for(application, files), typed=str(application))
     assert f"application {application}: Acme, ML Engineer" in out
@@ -96,18 +96,18 @@ def test_records_the_files_once_the_id_is_typed(
     assert f"recorded: submission 1 (application {application}, 2 documents)" in out
     assert (count(engine, "submissions"), count(engine, "documents")) == (1, 2)
     assert count(engine, "tool_calls") == 2
-    names = stored(gcs_test_bucket, record_prefix)
+    names = stored(gcs_bucket, record_prefix)
     assert len(names) == 2 and all(n.startswith(f"{record_prefix}{KEY}/") for n in names)
 
 
 def test_nothing_is_stored_unless_the_id_is_typed(
     engine: Engine, application: int, files: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], gcs_test_bucket: str, record_prefix: str,
+    capsys: pytest.CaptureFixture[str], gcs_bucket: storage.Bucket, record_prefix: str,
 ) -> None:  # fmt: skip
     with pytest.raises(SystemExit, match="not confirmed; nothing recorded"):
         run(monkeypatch, capsys, *args_for(application, files), typed="nope")
     assert count(engine, "submissions") == count(engine, "tool_calls") == 0
-    assert stored(gcs_test_bucket, record_prefix) == []
+    assert stored(gcs_bucket, record_prefix) == []
 
 
 def test_the_same_command_after_a_crash_records_once(

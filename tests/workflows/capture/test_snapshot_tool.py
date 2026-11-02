@@ -102,7 +102,7 @@ def test_a_failed_fetch_stores_nothing(
     site: Site,
     store: RecordStore,
     http: httpx.Client,
-    gcs_test_bucket: str,
+    gcs_bucket: storage.Bucket,
     record_prefix: str,
     status: int,
 ) -> None:
@@ -110,7 +110,7 @@ def test_a_failed_fetch_stores_nothing(
     tool = snapshot_posting_tool(store, http, prefix=record_prefix)
     with pytest.raises(FetchFailed, match=str(status)):
         tool.run({"url": site.url("job/1"), "dedupe_key": KEY})
-    stored = list(storage.Client().list_blobs(gcs_test_bucket, prefix=record_prefix))
+    stored = list(gcs_bucket.client.list_blobs(gcs_bucket, prefix=record_prefix))
     assert stored == []
 
 
@@ -118,7 +118,7 @@ def test_a_javascript_rendered_page_is_refused_before_storing(
     site: Site,
     store: RecordStore,
     http: httpx.Client,
-    gcs_test_bucket: str,
+    gcs_bucket: storage.Bucket,
     record_prefix: str,
 ) -> None:
     # What an Ashby or other single-page app serves: a shell, filled in by JS.
@@ -130,7 +130,7 @@ def test_a_javascript_rendered_page_is_refused_before_storing(
     tool = snapshot_posting_tool(store, http, prefix=record_prefix)
     with pytest.raises(FetchFailed, match=r"page looks JavaScript-rendered: 10 chars of text"):
         tool.run({"url": site.url("job/js"), "dedupe_key": KEY})
-    assert list(storage.Client().list_blobs(gcs_test_bucket, prefix=record_prefix)) == []
+    assert list(gcs_bucket.client.list_blobs(gcs_bucket, prefix=record_prefix)) == []
 
 
 def test_an_oversized_page_is_refused(
