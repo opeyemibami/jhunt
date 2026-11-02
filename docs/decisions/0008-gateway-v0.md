@@ -46,3 +46,13 @@ The gateway is scheduled for weeks 3 to 4, but Capture (week 2) already fetches 
 - **Level 1 says "then notify".** v0 records the call in the audit log, but sends no notification. Notifications come with the digest (weeks 3 to 4).
 - **`run_id`** is passed by the caller. The worker puts it into the graph config (`config["configurable"]["run_id"]`, from PR 2.5), so nodes pass it on.
 - **The gateway is in `jhunt.platform.gateway`**, one of the four packages the owner must be able to explain line by line. It is a single module of explicit SQL, with no framework.
+
+
+## Level 0 (PR 3.6b-2)
+
+Level 0 is **suggest only** (AGENTS.md: "produces a draft or recommendation; changes nothing").
+- **A tool may declare `suggests=True`** when all it does is store a suggestion for the owner, such as a pack draft (ADR 0016).
+- **At level 0 the gateway runs such a tool** and records it like any other. It **refuses any tool that acts**, with "level 0, suggest only".
+- **Level 1 runs any tool.** Levels 2 and 3 are still refused in v0.
+- **Lowering an action to level 0 still stops a tool that acts.** `tests/app/test_scout_wait.py` relies on that.
+- **The gateway can't verify** what a tool does. `suggests` is the tool's own declaration, reviewed like code.

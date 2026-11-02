@@ -9,7 +9,10 @@ For each call it:
 3. otherwise checks the action's level in autonomy_settings (hard rule 10);
 4. runs the tool, then records its result in tool_calls, the audit log.
 
-v0 runs level 1 actions only. Approvals (level 2) and notifications come later.
+v0 runs levels 0 and 1. Level 0 is suggest only: it runs a tool only if the
+tool says it just stores a suggestion for the owner (a draft); a tool that
+acts is refused there. Level 1 runs any tool. Approvals (level 2) and
+notifications come later.
 """
 
 import hashlib
@@ -20,8 +23,9 @@ from typing import Any
 
 from sqlalchemy import Engine, text
 
-# A level-1 action: act internally and reversibly, then notify.
-SUPPORTED_LEVEL = 1
+# Level 0: suggest only. Level 1: act internally and reversibly, then notify.
+SUGGEST = 0
+ACT = 1
 
 
 class ToolRefused(Exception):
@@ -41,6 +45,9 @@ class Tool:
     name: str
     action: str  # the autonomy_settings action whose level governs this tool
     run: Callable[[dict[str, Any]], dict[str, Any]]
+    # True: the tool only stores a suggestion for the owner (a draft), so it
+    # may run at level 0. Anything else acts, and needs level 1.
+    suggests: bool = False
 
 
 def idempotency_key(thread_id: str, node: str, step_key: str) -> str:
@@ -85,10 +92,12 @@ class ToolGateway:
         level = self._level(tool.action)
         if level is None:
             raise ToolRefused(f"no autonomy setting for {tool.action!r}")
-        if level != SUPPORTED_LEVEL:
+        if level == SUGGEST and not tool.suggests:
             raise ToolRefused(
-                f"{tool.action!r} is level {level}; gateway v0 runs level {SUPPORTED_LEVEL} only"
+                f"{tool.action!r} is level 0, suggest only; {tool.name!r} acts, so it can't run"
             )
+        if level not in (SUGGEST, ACT):
+            raise ToolRefused(f"{tool.action!r} is level {level}; gateway v0 runs levels 0 and 1")
 
         # If the tool raises, nothing is recorded and the error propagates: the
         # next attempt runs it again. Tools must be safe to repeat (ADR 0008).

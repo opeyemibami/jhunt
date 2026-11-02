@@ -26,6 +26,7 @@ jhunt-applications-delete = "jhunt.app.applications_delete:main"
 jhunt-api = "jhunt.app.web:main"
 jhunt-submission = "jhunt.app.submission:main"
 jhunt-facts = "jhunt.app.facts:main"
+jhunt-pack = "jhunt.app.pack:main"
 
 [build-system]
 requires = ["uv_build==0.13.1"]

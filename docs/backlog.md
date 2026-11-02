@@ -15,7 +15,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
-- **3.6b-2** the Application pack workflow (`draft → check → store`), the snapshot read through the gateway, `jhunt-pack <application_id> [--wait]` printing the cover note, CV lines and blocked claims, and the registry wiring; then a pack page on the digest (ADR 0016).
+- **Pack page**: the latest draft for each captured application on the digest. It shows the cover note, the CV lines with their fact ids, and the blocked claims with their reasons, plus a "Draft pack" button (ADR 0016; owner: command now, page next).
 - **After 3.6b, plan first, build only once the owner approves: search profiles.**
   - **Profiles** live in `config/profiles/<name>/` (`targets.toml`, `sources.toml`, `scope.toml`). There are three to start: `platform` (today's config), `frontier-early` (frontier and enterprise labs; earlier-career titles such as Research Engineer, Member of Technical Staff and AI Engineer; no Staff penalty) and `postdoc` (postdoctoral research aligned with the owner's PhD: vision, multimodal, anomaly detection, inference).
   - **Postings stay shared.** Scores are per (posting, profile), so one posting can rank in several profiles. The digest gets a tab per profile.

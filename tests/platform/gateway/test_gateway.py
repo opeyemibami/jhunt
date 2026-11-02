@@ -176,6 +176,48 @@ def test_levels_come_from_autonomy_settings(engine: Engine) -> None:
     assert len(body.calls) == 1
 
 
+def set_level(engine: Engine, action: str, level: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO autonomy_settings (action, level, changed_by) VALUES (:a, :l, 'owner')"
+            ),
+            {"a": action, "l": level},
+        )
+
+
+def test_level_0_runs_only_tools_that_only_suggest(engine: Engine) -> None:
+    # Level 0, suggest only (AGENTS.md): a tool that only stores a suggestion
+    # for the owner, such as a draft, may run; one that acts may not.
+    drafts, acts = Counter(), Counter()
+    gw = ToolGateway(
+        engine,
+        [
+            Tool("draft_pack", "draft_application_pack", drafts, suggests=True),
+            Tool("fetch_posting", "fetch_postings", acts),
+        ],
+    )
+    set_level(engine, "draft_application_pack", 0)
+    set_level(engine, "fetch_postings", 0)
+
+    gw.call("t", "draft", "draft", "draft_pack", {"n": 1}, run_id=None)
+    assert len(drafts.calls) == 1
+    [row] = rows(engine)
+    assert (row["tool"], row["level"]) == ("draft_pack", 0)
+    with pytest.raises(ToolRefused, match="level 0, suggest only"):
+        gw.call("t", "fetch", "page", "fetch_posting", {"n": 1}, run_id=None)
+    assert acts.calls == []
+
+
+def test_a_tool_that_suggests_still_needs_a_level_v0_runs(engine: Engine) -> None:
+    drafts = Counter()
+    gw = ToolGateway(engine, [Tool("draft_pack", "draft_application_pack", drafts, suggests=True)])
+    set_level(engine, "draft_application_pack", 2)  # approvals don't exist in v0
+    with pytest.raises(ToolRefused, match="level 2"):
+        gw.call("t", "draft", "draft", "draft_pack", {"n": 1}, run_id=None)
+    assert drafts.calls == []
+
+
 def test_an_action_without_a_setting_is_refused(engine: Engine) -> None:
     body = Counter()
     gw = gateway_with(engine, body, action="send_followup")
@@ -198,6 +240,7 @@ def test_seeded_levels(engine: Engine) -> None:
         "fetch_postings": 1,
         "snapshot_job_description": 1,
         "record_submission": 1,  # migration 0009 (ADR 0013), approved by the owner
+        "draft_application_pack": 0,  # migration 0013 (ADR 0016), approved by the owner
     }
 
 

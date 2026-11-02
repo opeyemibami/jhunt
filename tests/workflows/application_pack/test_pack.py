@@ -124,11 +124,15 @@ def test_the_cover_note_is_framed_by_the_fixed_opening_and_closing() -> None:
     body = reply([], [{"text": "I cut inference cost by 35% at Acme.", "fact_ids": ["role-acme"]},
                       {"text": "I led 40 engineers.", "fact_ids": ["role-acme"]}])  # fmt: skip
     draft = draft_pack(model_returning(body, []), FACTS, JOB, load_claim_levels(REPO_CONFIG))
-    note = cover_note_text(draft, load_pack_config(REPO_CONFIG), company="Fin", role="AI Engineer")
+    accepted = [c.text for c in draft.sections["cover_note"].accepted]
+    note = cover_note_text(
+        accepted, load_pack_config(REPO_CONFIG), company="Fin", role="AI Engineer"
+    )
     assert note.startswith("Dear Fin hiring team,\n\nI'm applying for the AI Engineer role.")
     assert "I cut inference cost by 35% at Acme." in note
     assert "40 engineers" not in note  # blocked: never in the note
-    assert note.endswith("Kind regards")
+    config = load_pack_config(REPO_CONFIG)
+    assert note.endswith(config.closing.format(company="Fin", role="AI Engineer"))
 
 
 @pytest.mark.parametrize(
