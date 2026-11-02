@@ -1,0 +1,138 @@
+"""Guarantee: no claim without a fact (hard rule 6, ADR 0015).
+
+Facts are imported into a scratch database the way jhunt-facts does it. Every
+claim comes back, in order and with its text unchanged; a claim is blocked,
+never reworded, when it cites no fact, an unknown fact or one that isn't
+verified, has a number its cited facts don't, or states a skill above its
+fact's level.
+"""
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from sqlalchemy import URL, Engine, create_engine, pool
+
+from jhunt.platform.memory.claims import Claim, check_claims, load_claim_levels
+from jhunt.platform.memory.facts import import_facts, latest_facts, read_facts, retire_fact
+
+REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
+FACTS = """
+[[fact]]
+id = "role-acme"
+kind = "role"
+text = "ML engineer at Acme from 2021 to 2024; cut inference cost by 35%; served 1,200 customers"
+evidence = "reference letter"
+verified_at = 2026-10-30
+status = "verified"
+
+[[fact]]
+id = "skill-langgraph"
+kind = "skill"
+text = "LangGraph"
+evidence = "github.com/me/jhunt"
+verified_at = 2026-10-30
+status = "verified"
+level = "built"
+
+[[fact]]
+id = "skill-k8s"
+kind = "skill"
+text = "Kubernetes"
+evidence = "course certificate and side project"
+verified_at = 2026-10-30
+status = "verified"
+level = "used"
+
+[[fact]]
+id = "skill-rust"
+kind = "skill"
+text = "Rust"
+status = "draft"
+
+[[fact]]
+id = "project-old"
+kind = "project"
+text = "Recommendation engine at Acme"
+evidence = "portfolio"
+verified_at = 2026-10-30
+status = "verified"
+"""
+
+
+@pytest.fixture
+def engine(migrated_db_url: URL) -> Iterator[Engine]:
+    eng = create_engine(migrated_db_url, poolclass=pool.NullPool)
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture
+def bank(engine: Engine, tmp_path: Path) -> Engine:
+    path = tmp_path / "facts.toml"
+    path.write_text(FACTS)
+    import_facts(engine, read_facts(path))
+    retire_fact(engine, "project-old")
+    return engine
+
+
+CLAIMS = [
+    # Supported: accepted
+    Claim("Cut inference cost by 35% at Acme", ("role-acme",)),
+    Claim("Built durable agent workflows with LangGraph", ("skill-langgraph",)),
+    Claim("Served 1200 customers between 2021 and 2024", ("role-acme",)),
+    Claim("Used Kubernetes to deploy model services", ("skill-k8s",)),
+    # Unsupported: blocked, with the reason
+    Claim("Led the ML platform team at Acme", ()),
+    Claim("Expert in TensorFlow", ("skill-tensorflow",)),
+    Claim("Wrote services in Rust", ("skill-rust",)),
+    Claim("Built a recommendation engine", ("project-old",)),
+    Claim("Cut inference cost by 40% at Acme", ("role-acme",)),
+    Claim("Served thousands of customers at Acme", ("role-acme",)),
+    Claim("Cut LangGraph inference cost by 35%", ("skill-langgraph",)),  # 35% is another fact's
+    Claim("Ran Kubernetes clusters in production", ("skill-k8s",)),
+    Claim("Built pipelines with LangGraph and Kubernetes", ("skill-langgraph", "skill-k8s")),
+]
+BLOCKED_FOR = {
+    "Led the ML platform team at Acme": "cites no fact",
+    "Expert in TensorFlow": "unknown fact 'skill-tensorflow'",
+    "Wrote services in Rust": "'skill-rust' is draft, not verified",
+    "Built a recommendation engine": "'project-old' is retired, not verified",
+    "Cut inference cost by 40% at Acme": "number '40%' is not in its cited facts",
+    "Served thousands of customers at Acme": "'thousands' is not in its cited facts",
+    "Cut LangGraph inference cost by 35%": "number '35%' is not in its cited facts",
+    "Ran Kubernetes clusters in production": "states production, above 'skill-k8s' (used)",
+    "Built pipelines with LangGraph and Kubernetes": "states built, above 'skill-k8s' (used)",
+}
+
+
+def test_unsupported_claims_are_blocked_never_reworded(bank: Engine) -> None:
+    checked = check_claims(CLAIMS, latest_facts(bank), load_claim_levels(REPO_CONFIG))
+
+    # Every claim comes back, in order, its text exactly as drafted.
+    assert [c.text for c in checked.claims] == [c.text for c in CLAIMS]
+    assert [c.text for c in checked.accepted] == [c.text for c in CLAIMS[:4]]
+    assert {c.text for c in checked.blocked} == set(BLOCKED_FOR)
+    for claim in checked.blocked:
+        reason = BLOCKED_FOR[claim.text]
+        assert any(reason in p for p in claim.problems), (claim.text, claim.problems)
+
+
+def test_an_accepted_claim_keeps_the_versions_it_was_checked_against(bank: Engine) -> None:
+    facts = latest_facts(bank)
+    [checked] = check_claims(CLAIMS[:1], facts, load_claim_levels(REPO_CONFIG)).claims
+    [role] = [f for f in facts if f.fact_id == "role-acme"]
+    assert (checked.blocked, checked.versions) == (False, (role.id,))
+
+
+def test_every_reason_is_listed(bank: Engine) -> None:
+    # No fact at all, so its number can't be in a cited fact either.
+    claim = Claim("Grew revenue 3x in 2 years", ())
+    [checked] = check_claims([claim], latest_facts(bank), load_claim_levels(REPO_CONFIG)).claims
+    assert checked.text == claim.text
+    assert len(checked.problems) == 3  # no fact; '3x'; '2'
+
+
+def test_an_empty_draft_has_nothing_to_block(bank: Engine) -> None:
+    checked = check_claims([], latest_facts(bank), load_claim_levels(REPO_CONFIG))
+    assert (checked.claims, checked.blocked) == ([], [])

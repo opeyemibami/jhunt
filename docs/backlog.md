@@ -15,7 +15,7 @@ Deferred until after these: timers, email intake, Tracker, prep, memory, evals, 
 
 **Plan for items 2 to 4** (approved by the owner, 2026-10-31). PRs in order:
 
-- **3.6** application pack drafts with cited facts (`test_fact_bank.py`).
+- **3.6b** application pack drafts: `pack.draft` (Sonnet) drafts claims as `{text, fact_ids}` from the verified facts, with the job description wrapped and labelled as untrusted data. Every draft goes through the 3.6a validator, and blocked claims are listed, never reworded. (3.6a, the validator and `test_fact_bank.py`, is PR 3.6a; owner, 2026-11-02)
 
 Decisions:
 
