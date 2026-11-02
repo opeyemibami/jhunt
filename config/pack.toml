@@ -1,0 +1,7 @@
+# The fixed parts of a drafted cover note (ADR 0016). The model writes only
+# sentences that cite facts; these frame them. {company} and {role} are the
+# only placeholders. Yours to edit.
+
+[cover_note]
+opening = "Dear {company} hiring team,\n\nI'm applying for the {role} role."
+closing = "I'd welcome the chance to talk about the role and what I'd bring to it.\n\nKind regards"
