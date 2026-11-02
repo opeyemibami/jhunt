@@ -2,6 +2,8 @@
 imports that are safe to re-run; versions that never change; and only the
 latest verified version of a fact is citable."""
 
+import hashlib
+import json
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -107,6 +109,11 @@ def test_a_good_file_reads_every_field(tmp_path: Path) -> None:
         # A draft can be incomplete, but not malformed
         (DRAFT.replace('level = "TODO"', 'level = "expert"'), "skill-k8s: level 'expert'"),
         (DRAFT.replace('kind = "skill"', 'kind = "role"'), "skill-k8s: level is only for skills"),
+        # Aliases: skills only, a list of names
+        (ROLE + 'aliases = ["Acme"]\n', "role-acme-2021: aliases are only for skills"),
+        (SKILL + 'aliases = "LangGraph"\n', "skill-langgraph: aliases must be a list of names"),
+        (SKILL + 'aliases = ["LangGraph", " "]\n',
+         "skill-langgraph: aliases must be a list of names"),
     ],
 )  # fmt: skip
 def test_a_bad_fact_rejects_the_whole_file(tmp_path: Path, body: str, problem: str) -> None:
@@ -213,3 +220,31 @@ def test_fact_versions_never_change(engine: Engine, tmp_path: Path, statement: s
     with pytest.raises(IntegrityError, match="refused"), engine.begin() as conn:
         conn.execute(text(statement))
     assert versions(engine) == [("role-acme-2021", 1, "verified")]
+
+
+def test_a_skill_keeps_its_aliases(engine: Engine, tmp_path: Path) -> None:
+    body = SKILL + 'aliases = ["LangGraph", "langgraph-sdk"]\n'
+    [skill] = read_facts(write(tmp_path, body))
+    assert skill.aliases == ("LangGraph", "langgraph-sdk")
+    import_facts(engine, [skill])
+    [stored] = latest_facts(engine)
+    assert stored.aliases == ("LangGraph", "langgraph-sdk")
+
+
+def test_a_fact_without_aliases_keeps_the_hash_it_had_before(
+    engine: Engine, tmp_path: Path
+) -> None:
+    # Facts imported before aliases existed must not look changed: their hash
+    # is the same six fields as before.
+    [skill] = read_facts(write(tmp_path, SKILL))
+    before = hashlib.sha256(
+        json.dumps(
+            ["skill", "LangGraph", "github.com/me/jhunt", "2026-10-31", "verified", "built"]
+        ).encode()
+    ).hexdigest()
+    assert skill.content_sha256() == before
+
+    # Adding aliases is a change: a new version.
+    import_facts(engine, [skill])
+    [with_aliases] = read_facts(write(tmp_path, SKILL + 'aliases = ["LangGraph"]\n'))
+    assert [f.fact_id for f in import_facts(engine, [with_aliases]).changed] == ["skill-langgraph"]

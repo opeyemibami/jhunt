@@ -1,0 +1,23 @@
+# The words that state a skill level in a drafted claim (ADR 0015).
+# A claim's stated level is the highest level whose words it contains (whole
+# words, any case). It is blocked if that's above the level of any skill fact
+# it cites. Levels, lowest first: studied, used, built, production.
+# Proposed in PR 3.6a; the owner tunes this list like targets.toml.
+
+[levels]
+studied = [
+  "studied", "familiar with", "coursework", "learning", "exposure to",
+  "introduction to",
+]
+used = [
+  "used", "using", "worked with", "working with", "experience with",
+  "hands-on", "applied",
+]
+built = [
+  "built", "building", "designed", "implemented", "developed", "created",
+  "architected", "wrote", "engineered",
+]
+production = [
+  "in production", "production-grade", "at scale", "shipped", "deployed",
+  "operated", "ran in production", "expert", "expertise in", "deep expertise",
+]
