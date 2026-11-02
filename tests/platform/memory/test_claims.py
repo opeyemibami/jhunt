@@ -176,7 +176,18 @@ def test_a_skill_mentioned_but_not_cited_is_checked_too(
     assert (problems == []) is ok, problems
 
 
-def test_a_mentioned_skill_that_isnt_verified_states_no_level() -> None:
-    # A draft or retired skill has no verified level to compare with.
-    draft = fact("k8s", "Kubernetes", kind="skill", level=None, status="draft", row=2)
-    assert blocked("Ran Kubernetes in production", [PROJECT, draft], ("project",)) == []
+@pytest.mark.parametrize("status", ["draft", "retired"])
+def test_a_claim_mentioning_an_unverified_skill_is_blocked(status: str) -> None:
+    # Owner, PR 3.6a review: naming a skill the bank doesn't vouch for is
+    # adding a skill, whatever the wording.
+    level = "used" if status == "retired" else None
+    skill = fact("k8s", "Kubernetes", kind="skill", level=level, status=status, row=2)
+    problems = blocked("Wrote Kubernetes operators", [PROJECT, skill], ("project",))
+    assert problems == [f"mentions unverified skill 'k8s' ({status})"]
+
+
+def test_citing_an_unverified_skill_is_reported_once() -> None:
+    skill = fact("k8s", "Kubernetes", kind="skill", status="draft", row=2)
+    assert blocked("Wrote Kubernetes operators", [skill], ("k8s",)) == [
+        "fact 'k8s' is draft, not verified"
+    ]
