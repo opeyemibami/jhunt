@@ -11,6 +11,7 @@ Nothing is sent anywhere: a draft is a suggestion for you to read and use.
 
 import argparse
 import time
+from typing import Any
 
 from sqlalchemy import Engine, create_engine, text
 
@@ -79,7 +80,8 @@ def _wait(engine: Engine, thread_id: str) -> int:
 
 
 def show_draft(engine: Engine, draft_id: int, config: PackConfig) -> str:
-    """The cover note, the CV lines, then every blocked claim as drafted."""
+    """The cover note and CV lines from the round that's used (the repair, if
+    there was one), then every blocked claim as drafted, by round."""
     with engine.connect() as conn:
         head = conn.execute(
             text(
@@ -90,13 +92,14 @@ def show_draft(engine: Engine, draft_id: int, config: PackConfig) -> str:
         ).one()
         claims = conn.execute(
             text(
-                "SELECT section, text, fact_ids, blocked, problems FROM draft_claims"
-                " WHERE draft_id = :d ORDER BY section DESC, position"
+                "SELECT round, section, text, fact_ids, blocked, problems FROM draft_claims"
+                " WHERE draft_id = :d ORDER BY round, section DESC, position"
             ),
             {"d": draft_id},
         ).all()
-    accepted = [c for c in claims if not c.blocked]
-    blocked = [c for c in claims if c.blocked]
+    used = max((c.round for c in claims), default=0)
+    final = [c for c in claims if c.round == used]
+    accepted = [c for c in final if not c.blocked]
     note = cover_note_text(
         [c.text for c in accepted if c.section == "cover_note"],
         config,
@@ -106,8 +109,23 @@ def show_draft(engine: Engine, draft_id: int, config: PackConfig) -> str:
     lines = [f"Draft {draft_id} for {head.company}, {head.role} ({head.model})", "", "Cover note"]
     lines += ["", note, "", "CV lines", ""]
     lines += [f"- {c.text}  [{', '.join(c.fact_ids)}]" for c in accepted if c.section == "cv_line"]
-    lines += ["", f"Blocked ({len(blocked)}): not in the note or the lines; never reworded", ""]
-    for c in blocked:
+    first_blocked = [c for c in claims if c.round == 0 and c.blocked]
+    if used:
+        lines += [
+            "",
+            f"Repair round: {len(first_blocked)} blocked claims went back to the model once,"
+            " with the whole draft; the note and lines above are its repair.",
+        ]
+        lines += _blocked("Blocked in the first draft, kept as drafted", first_blocked)
+        lines += _blocked("Still blocked after the repair", [c for c in final if c.blocked])
+    else:
+        lines += _blocked("Blocked", first_blocked)
+    return "\n".join(lines)
+
+
+def _blocked(title: str, claims: list[Any]) -> list[str]:
+    lines = ["", f"{title} ({len(claims)}): not in the note or the lines; never reworded", ""]
+    for c in claims:
         lines.append(f"- {SECTION_NAMES[c.section]}: {c.text}")
         lines += [f"    {problem}" for problem in c.problems]
-    return "\n".join(lines)
+    return lines

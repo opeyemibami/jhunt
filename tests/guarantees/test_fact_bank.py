@@ -201,7 +201,10 @@ def test_a_drafted_pack_stores_unsupported_claims_as_blocked_and_unchanged(bank:
 
     with bank.connect() as conn:
         stored = conn.execute(
-            text("SELECT section, text, blocked FROM draft_claims ORDER BY section, position")
+            text(
+                "SELECT section, text, blocked FROM draft_claims WHERE round = 0"
+                " ORDER BY section, position"
+            )
         ).all()
     assert [(c.section, c.text, c.blocked) for c in stored] == [
         ("cover_note", "I ran Kubernetes in production at Acme", True),

@@ -37,6 +37,14 @@ Every line and sentence is a claim.
   5. stores the draft and every claim (`store_draft`), once per thread.
 
   It returns `{draft_id, accepted, blocked}`, a reference (ADR 0008).
+- **The repair round** (owner, after the first real pack, application 6). If any claim of the first draft is blocked, the **whole draft goes back to the model once** (step `pack.repair`, also Sonnet).
+  - **What the model gets**: every claim, marked `[accepted]` or `[blocked: <reasons>]`, inside `<first_draft>`, escaped like the job description. Then the facts and the job as before.
+  - **What it returns**: the **complete** CV lines and cover note again. It keeps accepted claims unless they depend on a blocked one, replaces each blocked claim with a supported one or leaves it out, and never repeats a blocked claim. **Every line and sentence must stand alone**, since any one may be left out. In application 6's draft, "that RTX 5090" and "Inferex also includes" only made sense next to a blocked sentence; the whole note is in the repair prompt for exactly that.
+  - **Checking**: every claim of the repair goes through `check_claims` like any other.
+  - **One round, never more.** Whatever the repair still has blocked stays blocked and is listed.
+  - **Storage**: both rounds are kept (`draft_claims.round`, migration 0014). **Round 0's blocked claims stay stored as drafted**, never reworded, and round 1 is the one used.
+  - **Cost**: at most two model calls per draft, both inside the one recorded tool call, so a resume never repeats them.
+- **The prompt asks for more** (owner, same review): lead with professional experience over personal projects; address the job's stated requirements; leave out facts that don't bear on the role (a degree for an infrastructure role); every sentence stands alone. The role and company go inside the job's untrusted wrapper.
 - **Why one tool**: a tool result must be a reference, never the job text itself. A separate read tool couldn't hand the text to the model step. With one tool, the snapshot read goes through the gateway like every other storage call (hard rule 2), and the gateway records the result. **A re-run of the step gets the recorded result, so the model is called once per thread, even after a crash.** That also settles the cost this ADR first accepted.
 - **Level 0 in the gateway** (ADR 0008): a tool declares `suggests=True` when it only stores a suggestion for the owner. At level 0 the gateway runs such a tool and refuses any other, so lowering an action that acts to level 0 still stops it.
 - **The model gateway is built on the first model call** (`jhunt.app.registry`), so the worker and the commands start without `ANTHROPIC_API_KEY`. A pack draft without it fails with the gateway's "not set" message.
@@ -64,6 +72,10 @@ Every line and sentence is a claim.
 A pack page on the digest is the next PR.
 
 **Deleting**: `jhunt-applications-delete` also removes the application's drafts and their claims, and each draft thread's runs, tool calls and checkpoints.
+
+## Limits
+
+- **"Stands alone" is asked for, not checked.** A sentence that still leans on a left-out one ("that GPU") is caught only by reading, as is a claim whose meaning drifts from its fact. Application 6 turned "was a standard part" into "made … a standard part". Both need the meaning check under evals (backlog).
 
 ## Guarantee
 
