@@ -15,7 +15,7 @@ import datetime as dt
 import hashlib
 from dataclasses import dataclass
 
-from google.api_core.exceptions import PreconditionFailed
+from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from google.cloud.storage.retry import DEFAULT_RETRY
 
@@ -35,6 +35,10 @@ RETRY = DEFAULT_RETRY.with_timeout(60.0)
 
 class RecordExists(Exception):
     """A record already exists under this key. Records are never replaced."""
+
+
+class ObjectMissing(Exception):
+    """No object has this key and generation (any more)."""
 
 
 class RecordIntegrityError(Exception):
@@ -173,3 +177,24 @@ class StagingStore(_Store):
     def put(self, key: str, data: bytes, content_type: str) -> StoredRecord:
         """Write a new object. Raises RecordExists if the key is taken."""
         return self._create(key, data, content_type, retain=False)
+
+    def read(self, key: str, generation: int) -> bytes:
+        """Exactly this generation's bytes, unchecked: the caller hashes them
+        against what it expects (ADR 0018). ObjectMissing if it's gone."""
+        try:
+            data: bytes = self._bucket.blob(key, generation=generation).download_as_bytes(
+                timeout=TIMEOUT, retry=RETRY
+            )
+        except NotFound:
+            raise ObjectMissing(f"gs://{self._bucket.name}/{key}#{generation}") from None
+        return data
+
+    def delete(self, key: str, generation: int) -> bool:
+        """Delete exactly this generation. False if it was already gone, so a
+        repeated delete is safe. Staging only: the app has no delete on records
+        (AGENTS.md hard rule 13), and RecordStore has no such method."""
+        try:
+            self._bucket.blob(key, generation=generation).delete(timeout=TIMEOUT, retry=RETRY)
+        except NotFound:
+            return False
+        return True

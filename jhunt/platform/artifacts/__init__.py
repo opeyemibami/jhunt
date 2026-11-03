@@ -3,6 +3,7 @@ touches a storage SDK.
 """
 
 from jhunt.platform.artifacts.records import (
+    ObjectMissing,
     RecordExists,
     RecordIntegrityError,
     RecordStore,
@@ -10,4 +11,11 @@ from jhunt.platform.artifacts.records import (
     StoredRecord,
 )
 
-__all__ = ["RecordExists", "RecordIntegrityError", "RecordStore", "StagingStore", "StoredRecord"]
+__all__ = [
+    "ObjectMissing",
+    "RecordExists",
+    "RecordIntegrityError",
+    "RecordStore",
+    "StagingStore",
+    "StoredRecord",
+]

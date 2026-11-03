@@ -64,6 +64,19 @@ def gcs_test_bucket() -> str:
 
 
 @pytest.fixture(scope="session")
+def gcs_test_staging_bucket() -> str:
+    """The real CI staging bucket, set up like staging: the app may delete
+    there (ADR 0018). Never a fake store."""
+    name = os.environ.get("GCS_TEST_STAGING_BUCKET")
+    if not name:
+        pytest.fail(
+            "GCS_TEST_STAGING_BUCKET is not set: staging tests need the real CI staging bucket"
+            " (infra/gcp/setup.sh creates it)"
+        )
+    return name
+
+
+@pytest.fixture(scope="session")
 def gcs_client() -> Iterator[storage.Client]:
     """One storage client for the whole session (per xdist worker). Each new
     client refreshes its own token, and a refresh is a network call that can

@@ -34,7 +34,7 @@ The gateway is scheduled for weeks 3 to 4, but Capture (week 2) already fetches 
 
 **Arguments are small and deterministic; results are references** (owner review, PR 2.4).
 
-- **A tool's arguments** must be small and the same every time a given step runs: URLs, ids, keys. They must never be content fetched earlier. The arguments are hashed into `args_hash` and checked on every repeat, so content that can change between attempts (such as a page fetched twice) would make a re-run look like a different call.
+- **A tool's arguments** must be small and the same every time a given step runs: URLs, ids, keys. They must never be content fetched earlier. The arguments are hashed into `args_hash` and checked on every repeat, so content that can change between attempts (such as a page fetched twice) would make a re-run look like a different call. One deliberate exception, `stage_submission_file`, takes uploaded bytes fixed by their sha256 (ADR 0018).
 - **A tool's result** carries references (URIs, generations, hashes, ids), not payloads. A recorded result is returned on every repeat and lives in the audit log for good.
 - **What follows.** Work that fetches something and then stores it is one tool, not two passing content between them. Capture's `snapshot_posting(url, dedupe_key)` fetches the page and stores it, and returns only references (ADR 0007).
 

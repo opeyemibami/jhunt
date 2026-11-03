@@ -13,6 +13,7 @@ What gets created:
 | Resource | Settings |
 |---|---|
 | `gs://jhunt-staging-<suffix>` | Uniform access, public access blocked, 30-day lifecycle delete, no versioning, no retention, soft delete off |
+| `gs://jhunt-ci-staging-<suffix>` | Tests only: set up like staging. `jhunt-app` and `jhunt-ci` get staging's roles (create, view, delete), so tests can stage and delete uploads (ADR 0018) |
 | `gs://jhunt-records-<suffix>` | Uniform access, public access blocked, object versioning, per-object retention enabled, **no** bucket retention policy, 30-day soft delete |
 | `jhunt-app` | Both buckets: `objectCreator` + `objectViewer`. Staging: `jhuntObjectDeleter`. Records: `jhuntRetentionSetter` |
 | Your account | Records: `jhuntRecordsCurator`. Also `serviceAccountTokenCreator` on `jhunt-app`, so you can impersonate it instead of using a key |

@@ -17,7 +17,7 @@ import argparse
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -27,21 +27,16 @@ from jhunt.platform.artifacts import RecordStore
 from jhunt.platform.config import get_settings
 from jhunt.platform.gateway import ToolGateway
 from jhunt.workflows.workspace.submission import (
+    CONTENT_TYPES,
+    MAX_FILE_BYTES,
     SubmittedFile,
     record_submission,
     store_submission_file_tool,
     submission_thread_id,
+    submitted_at_utc,
 )
 
 RECORDS_PREFIX = "submissions/"
-MAX_FILE_BYTES = 10_000_000
-CONTENT_TYPES = {
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".odt": "application/vnd.oasis.opendocument.text",
-    ".txt": "text/plain; charset=utf-8",
-    ".md": "text/markdown; charset=utf-8",
-}
 _WINDOWS_PATH = re.compile(r"^([A-Za-z]):[\\/]")
 
 
@@ -172,16 +167,11 @@ def _local_file(kind: str, raw: str) -> LocalFile:
 
 
 def _submitted_at(raw: str) -> str:
-    """ISO 8601 in UTC. A date alone is midnight UTC that day, so the same
-    command re-run the same day gives the same submission."""
+    """ISO 8601 in UTC, the same rule as the application page's."""
     try:
-        when = datetime.fromisoformat(raw)
-    except ValueError:
-        _fail("--submitted-at: use 2026-11-01 or 2026-11-01T09:30")
-    when = when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
-    if when > datetime.now(UTC):
-        _fail(f"--submitted-at {raw} is in the future")
-    return when.isoformat()
+        return submitted_at_utc(raw)
+    except ValueError as exc:
+        _fail(f"--submitted-at: {exc}")
 
 
 def _application(engine: Engine, application_id: int) -> Row[Any]:

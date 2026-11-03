@@ -15,12 +15,14 @@
 #                               policy; 30-day soft delete
 #   gs://jhunt-ci-$SUFFIX       set up like records (so tests prove the real protections), but
 #                               soft delete off; tests and CI write here, never to records
+#   gs://jhunt-ci-staging-$SUFFIX  set up like staging; tests and CI stage files here (ADR 0018)
 #   jhunt-app   staging: create, view, delete
 #               records: create, view, and set retention at write time; nothing else
 #   owner       records: may remove an object's Unlocked retention and delete that object
 #   jhunt-ci    trusted by GitHub Actions for this repo via Workload Identity Federation
 #   ci bucket   jhunt-app and jhunt-ci: the app's records roles exactly (create, view,
 #               set retention on write); owner: the records curator role, to clear test records
+#   ci staging  jhunt-app and jhunt-ci: the app's staging roles exactly (create, view, delete)
 # It never creates a service account key and never sets a bucket retention policy.
 set -euo pipefail
 
@@ -35,6 +37,7 @@ P=(--project="$GCP_PROJECT")
 STAGING="jhunt-staging-${SUFFIX}"
 RECORDS="jhunt-records-${SUFFIX}"
 CI_BUCKET="jhunt-ci-${SUFFIX}"
+CI_STAGING="jhunt-ci-staging-${SUFFIX}"
 APP_SA="jhunt-app@${GCP_PROJECT}.iam.gserviceaccount.com"
 CI_SA="jhunt-ci@${GCP_PROJECT}.iam.gserviceaccount.com"
 ROLE_PREFIX="projects/${GCP_PROJECT}/roles"
@@ -73,6 +76,15 @@ if ! gcloud storage buckets describe "gs://${STAGING}" "${P[@]}" >/dev/null 2>&1
 fi
 # Soft delete off: expired postings should go for good, not linger (and bill) for 7 days.
 gcloud storage buckets update "gs://${STAGING}" "${P[@]}" \
+  --lifecycle-file="${HERE}/staging-lifecycle.json" --no-versioning --clear-retention-period \
+  --clear-soft-delete
+
+step "bucket gs://${CI_STAGING} (tests; set up like staging)"
+if ! gcloud storage buckets describe "gs://${CI_STAGING}" "${P[@]}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${CI_STAGING}" "${P[@]}" --location="$REGION" \
+    --default-storage-class=STANDARD --uniform-bucket-level-access --public-access-prevention
+fi
+gcloud storage buckets update "gs://${CI_STAGING}" "${P[@]}" \
   --lifecycle-file="${HERE}/staging-lifecycle.json" --no-versioning --clear-retention-period \
   --clear-soft-delete
 
@@ -153,6 +165,14 @@ done
 # The owner clears test records with jhunt-records-delete (ADR 0002).
 bind_bucket "$CI_BUCKET" "user:${OWNER}" "${ROLE_PREFIX}/jhuntRecordsCurator"
 
+step "CI staging bucket: jhunt-app and jhunt-ci get the app's staging roles"
+# Exactly the app's staging permissions: create, view, delete (ADR 0018).
+for sa in "$APP_SA" "$CI_SA"; do
+  bind_bucket "$CI_STAGING" "serviceAccount:${sa}" roles/storage.objectCreator
+  bind_bucket "$CI_STAGING" "serviceAccount:${sa}" roles/storage.objectViewer
+  bind_bucket "$CI_STAGING" "serviceAccount:${sa}" "${ROLE_PREFIX}/jhuntObjectDeleter"
+done
+
 step "let ${OWNER} impersonate jhunt-app (local ADC and the proof script; no keys)"
 retry gcloud iam service-accounts add-iam-policy-binding "$APP_SA" "${P[@]}" \
   --member="user:${OWNER}" --role=roles/iam.serviceAccountTokenCreator >/dev/null
@@ -174,7 +194,7 @@ retry gcloud iam service-accounts add-iam-policy-binding "$CI_SA" "${P[@]}" \
   --role=roles/iam.workloadIdentityUser \
   --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository_id/${GITHUB_REPO_ID}" \
   >/dev/null
-# jhunt-ci's only bucket roles are on the CI bucket (above).
+# jhunt-ci's only bucket roles are on the two CI buckets (above).
 
 step "done"
 cat <<EOF
@@ -183,9 +203,11 @@ Add to .env:
   GCS_STAGING_BUCKET=${STAGING}
   GCS_RECORDS_BUCKET=${RECORDS}
   GCS_TEST_BUCKET=${CI_BUCKET}
+  GCS_TEST_STAGING_BUCKET=${CI_STAGING}
 For GitHub Actions, repository variables (not secrets):
   GCP_WORKLOAD_IDENTITY_PROVIDER=projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/github
   GCP_CI_SERVICE_ACCOUNT=${CI_SA}
   GCS_TEST_BUCKET=${CI_BUCKET}
+  GCS_TEST_STAGING_BUCKET=${CI_STAGING}
 Next: infra/gcp/check-objectstore.sh (see infra/gcp/README.md).
 EOF

@@ -14,7 +14,7 @@ from jhunt.platform.gateway import ToolGateway
 from jhunt.platform.memory.claims import load_claim_levels
 from jhunt.platform.models import ModelGateway, ModelRequest, ModelResponse
 from jhunt.platform.runtime.registry import Registry
-from jhunt.workflows import application_pack, capture, scout
+from jhunt.workflows import application_pack, capture, scout, workspace
 
 # Identifies us to the sites we fetch job pages from.
 USER_AGENT = "jhunt/0.1 (personal job search; one fetch per captured posting, one per board a day)"
@@ -35,6 +35,8 @@ def build_registry(settings: Settings, engine: Engine) -> Registry:
         application_pack.draft_pack_tool(
             engine, store, _lazy_models(settings), load_claim_levels(settings.jhunt_config_dir)
         ),
+        workspace.store_submission_file_tool(store, staging=staging),
+        workspace.delete_staged_submission_file_tool(staging),
     ]
     gateway = ToolGateway(engine, tools)
 
@@ -44,6 +46,9 @@ def build_registry(settings: Settings, engine: Engine) -> Registry:
         registry.register(scout.WORKFLOW, version, scout.build(engine, gateway))
     registry.register(
         application_pack.WORKFLOW, application_pack.VERSION, application_pack.build(gateway)
+    )
+    registry.register(
+        workspace.WORKFLOW, workspace.VERSION, workspace.build(engine, gateway, staging)
     )
     return registry
 
