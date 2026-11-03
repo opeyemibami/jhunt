@@ -28,10 +28,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import Engine, text
 
-from jhunt.api import applications, facts, live, pack
+from jhunt.api import applications, facts, live, pack, submission
 from jhunt.api.page import page
 from jhunt.jobs.boards import board_job_url
-from jhunt.platform.artifacts import RecordStore
+from jhunt.platform.artifacts import RecordStore, StagingStore
 from jhunt.platform.runtime.registry import Registry
 from jhunt.platform.runtime.threads import ThreadExists, enqueue_start
 from jhunt.workflows import capture, scout
@@ -48,6 +48,7 @@ def create_app(
     config_dir: Path,
     conninfo: str,
     records: RecordStore,
+    staging: StagingStore | None = None,
     today: Callable[[], str] = scout.utc_today,
 ) -> FastAPI:
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
@@ -119,6 +120,7 @@ def create_app(
     applications.add_routes(app, engine, records, from_this_page)
     facts.add_routes(app, engine, from_this_page)
     pack.add_routes(app, engine, registry, config_dir, from_this_page)
+    submission.add_routes(app, engine, registry, staging, from_this_page)
 
     @app.get("/runs/{run_id}")
     def run_status(run_id: int) -> JSONResponse:

@@ -18,6 +18,7 @@ says why and shows everything else. Every value is escaped.
 import html
 import json
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -211,6 +212,13 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> tuple
             ),
             {"a": a.id},
         ).all()
+        submission_run = conn.execute(
+            text(
+                "SELECT id, status, error FROM runs WHERE workflow = 'submission'"
+                " AND thread_id LIKE :p ORDER BY id DESC LIMIT 1"
+            ),
+            {"p": f"submission-{a.id}-%"},
+        ).first()
         pack_run = conn.execute(
             text(
                 "SELECT id, status FROM runs WHERE workflow = 'application_pack'"
@@ -273,13 +281,14 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> tuple
 {shown}
 <h2>Events</h2>
 <ul class="plain">{event_items or "<li>None</li>"}</ul>
-<h2>Submissions</h2>
+<h2 id="submissions">Submissions</h2>
 <ul class="plain">{"".join(submission_items) or "<li>None yet</li>"}</ul>
+{_submission_form(a.id, submission_run)}
 <h2 id="pack">Drafts</h2>
 <p><form method="post" action="/applications/{a.id}/pack" class="inline">
 <button type="submit" class="primary">Draft pack</button></form> {_pack_status(pack_run)}</p>
 <ul class="plain">{draft_items or "<li>None yet</li>"}</ul>""",
-        (pack_run is not None and pack_run.status in live.ACTIVE),
+        any(r is not None and r.status in live.ACTIVE for r in (pack_run, submission_run)),
     )
 
 
@@ -299,6 +308,32 @@ def _archive_panel(a: Any) -> str:
         button(f"archive/{key}", f"Archive: {label}") for key, label in OUTCOMES.items()
     )
     return f'<p class="meta">{archive}</p>'
+
+
+def _submission_form(application_id: int, run: Any) -> str:
+    """Record what you sent (ADR 0018): files, channel and date, then a preview.
+    The latest recording's status, live, while it runs or if it failed."""
+    status = ""
+    if run is not None and (run.status in live.ACTIVE or run.status == "failed"):
+        shown = f"failed: {run.error}" if run.status == "failed" else run.status
+        status = live.status_element(run.id, run.status, shown, label="Recording: ")
+    file_input = (
+        '<label>{} <input type="file" name="{}" accept=".pdf,.docx,.odt,.txt,.md"{}></label>'
+    )
+    return f"""<details{" open" if status else ""}><summary>Record a submission</summary>
+<p class="meta">You submit outside jhunt; this records exactly what you sent. PDF, DOCX, ODT,
+TXT or MD, up to 10 MB each; answers as TXT or MD.</p>
+<form method="post" action="/applications/{application_id}/submission"
+ enctype="multipart/form-data" class="fact-form">
+{file_input.format("CV", "cv", "")}
+{file_input.format("Cover note", "cover_note", "")}
+{file_input.format("Answers", "answers", "")}
+{file_input.format("Other files", "other", " multiple")}
+<label>Channel, e.g. company site <input name="channel"></label>
+<label>Submitted on
+<input type="date" name="submitted_at" value="{date.today().isoformat()}"></label>
+<p><button type="submit" class="primary">Preview</button></p></form></details>
+<p>{status}</p>"""
 
 
 def _pack_status(run: Any) -> str:

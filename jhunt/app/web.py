@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 from jhunt.api.digest import create_app
 from jhunt.app.registry import build_registry
-from jhunt.platform.artifacts import RecordStore
+from jhunt.platform.artifacts import RecordStore, StagingStore
 from jhunt.platform.config import get_settings
 
 HOST = "127.0.0.1"
@@ -28,5 +28,7 @@ def main() -> None:
         config_dir=settings.jhunt_config_dir,
         conninfo=conninfo.render_as_string(hide_password=False),
         records=RecordStore(settings.gcs_records_bucket or ""),
+        # Uploads wait in staging until the submission run records them (ADR 0018).
+        staging=StagingStore(settings.gcs_staging_bucket) if settings.gcs_staging_bucket else None,
     )
     uvicorn.run(app, host=HOST, port=settings.jhunt_api_port)

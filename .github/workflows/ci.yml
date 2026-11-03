@@ -68,6 +68,7 @@ jobs:
       # The CI bucket, set up like records; jhunt-ci has exactly the app's roles
       # on it (ADR 0002). Repository variables, not secrets.
       GCS_TEST_BUCKET: ${{ vars.GCS_TEST_BUCKET }}
+      GCS_TEST_STAGING_BUCKET: ${{ vars.GCS_TEST_STAGING_BUCKET }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

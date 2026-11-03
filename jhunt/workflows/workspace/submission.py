@@ -10,22 +10,39 @@ A submission's thread id comes from what was submitted, not a counter, so the
 same command re-run after a crash lands on the same thread: the gateway hands
 back the uploads it recorded, and record_submission returns the submission it
 wrote, if it got that far.
+
+From the application page (ADR 0018), the files are checked, then staged at
+uploads/<sha256>/<file name> (stage_submission_file) for the preview. The
+submission run reads each staged copy at the generation staged, refuses it
+if its sha256 isn't the one shown, records it, and deletes the staged copy
+(delete_staged_submission_file).
 """
 
+import base64
 import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, Engine, text
 
-from jhunt.platform.artifacts import RecordStore
+from jhunt.platform.artifacts import RecordStore, StagingStore
 from jhunt.platform.gateway import Tool
 
 ACTION = "record_submission"
 KINDS = ("cv", "cover_note", "answers", "other")
+MAX_FILE_BYTES = 10_000_000
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+}
+STAGING_PREFIX = "uploads/"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 # A file name as part of an object name: no folders, nothing odd.
 _FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ ()-]{0,199}")
@@ -53,12 +70,86 @@ def submission_thread_id(
     return f"submission-{application_id}-{hashlib.sha256(what.encode()).hexdigest()[:12]}"
 
 
-def store_submission_file_tool(store: RecordStore, *, prefix: str = "submissions/") -> Tool:
+def file_problem(kind: str, file_name: str, size: int) -> str | None:
+    """Why this file can't be recorded, or None: the type, the size and the
+    name, checked before anything is stored (owner, ADR 0018)."""
+    suffix = Path(file_name).suffix.lower()
+    if suffix not in CONTENT_TYPES:
+        return f"{file_name}: not a PDF, DOCX, ODT, TXT or MD file"
+    if kind == "answers" and suffix not in (".txt", ".md"):
+        return f"{file_name}: answers must be a TXT or MD file"
+    if size > MAX_FILE_BYTES:
+        return f"{file_name}: {size} bytes, over the {MAX_FILE_BYTES}-byte limit"
+    if not _FILE_NAME.fullmatch(file_name):
+        return f"{file_name}: rename it to letters, digits, spaces and . _ ( ) - only"
+    return None
+
+
+def submitted_at_utc(raw: str) -> str:
+    """ISO 8601 in UTC. A date alone is midnight UTC that day, so the same
+    submission given again the same day gets the same thread. ValueError if
+    it isn't a date or it's in the future."""
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        raise ValueError("use 2026-11-01 or 2026-11-01T09:30") from None
+    when = when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+    if when > datetime.now(UTC):
+        raise ValueError(f"{raw} is in the future")
+    return when.isoformat()
+
+
+def staged_key(sha256: str, file_name: str) -> str:
+    """Where a file waits for confirmation: keyed by its content (owner)."""
+    return f"{STAGING_PREFIX}{sha256}/{file_name}"
+
+
+def stage_submission_file_tool(staging: StagingStore) -> Tool:
+    """Stage one uploaded file for the preview, create-only, at
+    uploads/<sha256>/<file name>. Its arguments are the file's bytes (base64;
+    the gateway keeps only their hash) and what the page showed for them.
+    A copy already there is used only if its bytes have that sha256."""
+
+    def run(args: dict[str, Any]) -> dict[str, Any]:
+        sha, name, kind = args["sha256"], args["file_name"], args["kind"]
+        data = base64.b64decode(args["data"], validate=True)
+        if not _SHA256.fullmatch(sha) or hashlib.sha256(data).hexdigest() != sha:
+            raise SubmissionFileChanged(f"{name}: the bytes don't have sha256 {sha}")
+        problem = file_problem(kind, name, len(data))
+        if problem is not None:
+            raise ValueError(problem)
+        content_type = CONTENT_TYPES[Path(name).suffix.lower()]
+        staged, found = staging.put_or_adopt(staged_key(sha, name), data, content_type)
+        if staged.sha256 != sha:
+            raise SubmissionFileChanged(f"{staged.uri} holds other bytes than {name}")
+        return {"key": staged.key, "generation": staged.generation, "sha256": staged.sha256,
+                "size": len(found)}  # fmt: skip
+
+    return Tool("stage_submission_file", ACTION, run)
+
+
+def delete_staged_submission_file_tool(staging: StagingStore) -> Tool:
+    """Delete a staged copy once its submission is recorded: that exact
+    generation. One already gone counts as deleted."""
+
+    def run(args: dict[str, Any]) -> dict[str, Any]:
+        if not args["key"].startswith(STAGING_PREFIX):
+            raise ValueError(f"not a staged upload: {args['key']!r}")
+        return {"deleted": staging.delete(args["key"], int(args["generation"]))}
+
+    return Tool("delete_staged_submission_file", ACTION, run)
+
+
+def store_submission_file_tool(
+    store: RecordStore, *, staging: StagingStore | None = None, prefix: str = "submissions/"
+) -> Tool:
     """Keep one submitted file as a record, create-only, at
     <prefix><application dedupe_key>/<sha256>/<file name>.
 
-    Its arguments are the local path and what the owner confirmed (ADR 0008):
-    the file is read here and refused if its sha256 changed since.
+    Its arguments are where the file is and what the owner confirmed (ADR 0008):
+    a local "path" (jhunt-submission), or a "staged" copy's key and generation
+    (the application page, ADR 0018). The file is read here, hashed, and
+    refused if its sha256 isn't the one confirmed.
     """
 
     def run(args: dict[str, Any]) -> dict[str, Any]:
@@ -70,9 +161,13 @@ def store_submission_file_tool(store: RecordStore, *, prefix: str = "submissions
             or not _FILE_NAME.fullmatch(name)
         ):
             raise ValueError(f"bad store_submission_file arguments: {args!r}")
-        data = Path(args["path"]).read_bytes()
+        if "staged" in args:
+            data = read_staged(staging, args["staged"], sha, name)
+        else:
+            data = Path(args["path"]).read_bytes()
         if hashlib.sha256(data).hexdigest() != sha:
-            raise SubmissionFileChanged(f"{args['path']} changed after it was confirmed")
+            where = args.get("path") or args["staged"]["key"]
+            raise SubmissionFileChanged(f"{where} changed after it was confirmed")
         record, _ = store.put_or_adopt(f"{prefix}{key}/{sha}/{name}", data, args["content_type"])
         return {
             "uri": record.uri,
@@ -82,6 +177,17 @@ def store_submission_file_tool(store: RecordStore, *, prefix: str = "submissions
         }
 
     return Tool("store_submission_file", ACTION, run)
+
+
+def read_staged(
+    staging: StagingStore | None, staged: dict[str, Any], sha256: str, file_name: str
+) -> bytes:
+    """A staged copy's bytes, at the generation staged. The caller hashes them."""
+    if staging is None:
+        raise ValueError("no staging store: this tool reads local paths only")
+    if staged["key"] != staged_key(sha256, file_name):
+        raise ValueError(f"not this file's staged copy: {staged['key']!r}")
+    return staging.read(staged["key"], int(staged["generation"]))
 
 
 def record_submission(

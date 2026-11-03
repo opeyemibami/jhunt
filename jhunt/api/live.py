@@ -87,4 +87,16 @@ def status_text(engine: Engine, conninfo: str, registry: Registry, run: Any) -> 
             ).first()
         if drafted is not None:
             return f"draft {drafted.id}: {drafted.accepted} accepted, {drafted.blocked} blocked"
+    if run.workflow == "submission":
+        with engine.connect() as conn:
+            recorded = conn.execute(
+                text(
+                    "SELECT s.id, count(sd.document_id) AS documents FROM submissions s"
+                    " JOIN submission_documents sd ON sd.submission_id = s.id"
+                    " WHERE s.submission_key = :t GROUP BY s.id"
+                ),
+                {"t": run.thread_id},
+            ).first()
+        if recorded is not None:
+            return f"recorded: submission {recorded.id} ({recorded.documents} documents)"
     return "succeeded"
