@@ -25,6 +25,8 @@ from jhunt.workflows.workspace.submission import (
 )
 
 TABLES = [
+    "labels",
+    "draft_edits",
     "draft_claims",
     "pack_drafts",
     "submission_documents",
@@ -152,6 +154,20 @@ def seed(engine: Engine, n: int) -> int:
             ),
             {"d": draft_id},
         )
+        # An edit of that claim, and the label it left (ADR 0017).
+        conn.execute(
+            text(
+                "INSERT INTO draft_edits (draft_id, round, section, position, version, text,"
+                " warnings, created_by) VALUES (:d, 0, 'cv_line', 0, 1, 'Built more', '{}', 'you')"
+            ),
+            {"d": draft_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO labels (kind, target, created_by) VALUES ('draft_edited', :t, 'you')"
+            ),
+            {"t": f"draft:{draft_id}:0:cv_line:0"},
+        )
     return application_id
 
 
@@ -210,6 +226,8 @@ def test_triggers_are_back_on_after_the_delete(engine: Engine) -> None:
     with pytest.raises(IntegrityError, match="refused"), engine.begin() as conn:
         conn.execute(text("DELETE FROM applications WHERE id = :a"), {"a": other})
     for table in (
+        "labels",
+        "draft_edits",
         "draft_claims",
         "pack_drafts",
         "submission_documents",

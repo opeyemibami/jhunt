@@ -73,4 +73,18 @@ def status_text(engine: Engine, conninfo: str, registry: Registry, run: Any) -> 
     if run.workflow == scout.WORKFLOW:
         lines = scout.run_summary(conninfo, registry, run.thread_id)
         return "\n".join(lines) if lines else "succeeded"
+    if run.workflow == "application_pack":
+        with engine.connect() as conn:
+            drafted = conn.execute(
+                text(
+                    "SELECT d.id, count(*) FILTER (WHERE NOT c.blocked) AS accepted,"
+                    " count(*) FILTER (WHERE c.blocked) AS blocked FROM pack_drafts d"
+                    " JOIN draft_claims c ON c.draft_id = d.id AND c.round ="
+                    "  (SELECT max(round) FROM draft_claims WHERE draft_id = d.id)"
+                    " WHERE d.thread_id = :t GROUP BY d.id"
+                ),
+                {"t": run.thread_id},
+            ).first()
+        if drafted is not None:
+            return f"draft {drafted.id}: {drafted.accepted} accepted, {drafted.blocked} blocked"
     return "succeeded"

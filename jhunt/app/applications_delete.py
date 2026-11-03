@@ -1,8 +1,9 @@
 """`jhunt-applications-delete <id>`: delete one application and everything it left.
 
 Owner only: for an application that should never have been captured, or a
-privacy request. In one transaction it removes the application's pack drafts
-and their claims (ADR 0016), its submissions, documents and their links (ADR
+privacy request. In one transaction it removes the owner's labels about it
+and its drafts, the edits to its drafts (ADR 0017), its pack drafts and their
+claims (ADR 0016), its submissions, documents and their links (ADR
 0013), its events, the application, its
 snapshot row, and its threads' tool calls, runs, threads rows and checkpoints
 (Capture's, each submission's and each draft's). Then it deletes the snapshot's and the
@@ -35,6 +36,8 @@ from jhunt.workflows import capture
 
 # The triggers that refuse deletes, by table (migrations 0005, 0006, 0009, 0012).
 _GUARDS = {
+    "labels": "labels_append_only",
+    "draft_edits": "draft_edits_append_only",
     "draft_claims": "draft_claims_append_only",
     "pack_drafts": "pack_drafts_append_only",
     "submission_documents": "submission_documents_append_only",
@@ -61,6 +64,17 @@ class Plan:
 # delete order: what points at the application first, then the application,
 # then the snapshot it points at.
 _SCOPE = [
+    # Labels about this application's posting (Not interested) or its drafts.
+    (
+        "labels",
+        "target = (SELECT dedupe_key FROM applications WHERE id = :application_id)"
+        " OR target LIKE ANY (SELECT 'draft:' || id || ':%' FROM pack_drafts"
+        "  WHERE application_id = :application_id)",
+    ),
+    (
+        "draft_edits",
+        "draft_id IN (SELECT id FROM pack_drafts WHERE application_id = :application_id)",
+    ),
     (
         "draft_claims",
         "draft_id IN (SELECT id FROM pack_drafts WHERE application_id = :application_id)",

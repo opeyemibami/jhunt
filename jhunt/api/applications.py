@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import Engine, text
 
+from jhunt.api import live
 from jhunt.api.page import page
 from jhunt.platform.artifacts import RecordIntegrityError, RecordStore
 
@@ -68,9 +69,9 @@ def add_routes(
         if found is None:
             raise HTTPException(404, "no such application")
         job = _job_description(records, found)
-        return page(
-            f"{found.company}, {found.role}", _detail(engine, found, job), current="/applications"
-        )
+        body, waiting = _detail(engine, found, job)
+        return page(f"{found.company}, {found.role}", body, current="/applications",
+                    waiting=waiting)  # fmt: skip
 
 
 def _applications(engine: Engine) -> list[Any]:
@@ -189,7 +190,7 @@ def _job_description(records: RecordStore, found: Any) -> tuple[str | None, str 
     return data.decode("utf-8", errors="replace"), None
 
 
-def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> str:
+def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> tuple[str, bool]:
     with engine.connect() as conn:
         events = conn.execute(
             text("SELECT type, actor, at FROM events WHERE application_id = :a ORDER BY at, id"),
@@ -210,6 +211,13 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> str:
             ),
             {"a": a.id},
         ).all()
+        pack_run = conn.execute(
+            text(
+                "SELECT id, status FROM runs WHERE workflow = 'application_pack'"
+                " AND thread_id LIKE :p ORDER BY id DESC LIMIT 1"
+            ),
+            {"p": f"pack-{a.id}-%"},
+        ).first()
         drafts = conn.execute(
             text(
                 "SELECT p.id, p.model, p.created_at, max(c.round) AS rounds,"
@@ -250,12 +258,14 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> str:
             f'<ul class="plain">{docs}</ul></li>'
         )
     draft_items = "".join(
-        f"<li>Draft {d.id} · {d.created_at:%Y-%m-%d %H:%M} · {e(d.model)} ·"
+        f'<li><a href="/drafts/{d.id}">Draft {d.id}</a> · {d.created_at:%Y-%m-%d %H:%M}'
+        f" · {e(d.model)} ·"
         f" {d.accepted} accepted, {d.blocked} blocked"
         f"{' · repaired' if d.rounds else ''}</li>"
         for d in drafts
     )
-    return f"""
+    return (
+        f"""
 <h1>{e(a.company)}, {e(a.role)}</h1>
 <p class="meta">Stage: {e(a.stage)} · captured {a.captured_at:%Y-%m-%d %H:%M} UTC · {link}</p>
 {_archive_panel(a)}
@@ -265,8 +275,12 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> str:
 <ul class="plain">{event_items or "<li>None</li>"}</ul>
 <h2>Submissions</h2>
 <ul class="plain">{"".join(submission_items) or "<li>None yet</li>"}</ul>
-<h2>Drafts</h2>
-<ul class="plain">{draft_items or "<li>None yet</li>"}</ul>"""
+<h2 id="pack">Drafts</h2>
+<p><form method="post" action="/applications/{a.id}/pack" class="inline">
+<button type="submit" class="primary">Draft pack</button></form> {_pack_status(pack_run)}</p>
+<ul class="plain">{draft_items or "<li>None yet</li>"}</ul>""",
+        (pack_run is not None and pack_run.status in live.ACTIVE),
+    )
 
 
 def _archive_panel(a: Any) -> str:
@@ -285,3 +299,10 @@ def _archive_panel(a: Any) -> str:
         button(f"archive/{key}", f"Archive: {label}") for key, label in OUTCOMES.items()
     )
     return f'<p class="meta">{archive}</p>'
+
+
+def _pack_status(run: Any) -> str:
+    """The latest draft run while it's queued or running, live (ADR 0017)."""
+    if run is None or run.status not in live.ACTIVE:
+        return ""
+    return live.status_element(run.id, run.status, run.status, label="Drafting: ")
