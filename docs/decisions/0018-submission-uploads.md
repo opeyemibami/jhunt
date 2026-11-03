@@ -44,6 +44,12 @@ The options were:
 
 **Tests need a staging bucket set up like staging.** Staged copies are deleted, and the CI bucket is set up like records, where neither test identity may delete. `infra/gcp/setup.sh` adds `gs://jhunt-ci-staging-<suffix>`, set up like staging, where `jhunt-app` and `jhunt-ci` have staging's roles (create, view, delete). Tests read its name from `GCS_TEST_STAGING_BUCKET`.
 
+**An exception to ADR 0008's small-arguments rule.** `stage_submission_file` takes the file's bytes (base64) as a tool argument. ADR 0008 says a tool's arguments are small and deterministic, never content, because content that can change between attempts would make a re-run look like a different call. This is a deliberate exception, for two reasons:
+- **The bytes are fixed by their sha256.** The same sha256 is part of the step key (`<kind>:<sha256>:<file name>`). So a repeat of the step can only carry the same bytes, and different bytes are a different step.
+- **The gateway stores only `args_hash`, never the arguments.** The bytes don't go into `tool_calls`.
+
+There's no earlier copy the tool could read the bytes from: the upload exists only in the request. The exception covers this one tool; every other tool keeps the rule.
+
 ## Consequences
 
 - **The command and the page don't mix on one thread.** If a page submission fails partway, re-running `jhunt-submission` with the same files, channel and date lands on the same thread with different `store` arguments (a path, not a staged object). The gateway refuses that as an idempotency conflict. Recording the same submission with a different date avoids it.

@@ -7,6 +7,7 @@ staging bucket for uploads."""
 
 import hashlib
 import html
+import json
 import re
 import uuid
 from collections.abc import Iterator
@@ -253,15 +254,18 @@ def test_a_staged_copy_changed_after_the_preview_is_refused(
     application: int, staging: StagingStore, cv: bytes, gcs_bucket: storage.Bucket,
     record_prefix: str, lease_watch: LeaseWatch,
 ) -> None:  # fmt: skip
-    fields = form(preview(client, application, [("cv", ("cv.pdf", cv))]).text)
-    key = staged_key(hashlib.sha256(cv).hexdigest(), "cv.pdf")
-    replace_staged(staging, key, b"%PDF some other CV")
+    # Two files, the second changed: the first must not reach records either.
+    answers = f"Why us? {uuid.uuid4()}".encode()
+    two = [("cv", ("cv.pdf", cv)), ("answers", ("answers.md", answers))]
+    fields = form(preview(client, application, two).text)
+    key = staged_key(hashlib.sha256(answers).hexdigest(), "answers.md")
+    replace_staged(staging, key, b"Some other answers")
 
     confirm(client, application, fields, typed=str(application))
     run = work(db, registry, lease_watch)
+    assert_nothing_recorded(engine, gcs_bucket, record_prefix)
     status = client.get(f"/runs/{run.id}").json()
     assert status["status"] == "failed" and "ObjectMissing" in status["text"]
-    assert_nothing_recorded(engine, gcs_bucket, record_prefix)
     page = client.get(f"/applications/{application}").text
     assert "Recording: failed: ObjectMissing" in page
 
@@ -273,16 +277,21 @@ def test_the_sha256_read_is_checked_even_at_the_new_generation(
 ) -> None:  # fmt: skip
     """The form names the replaced copy's generation: what's read there is
     hashed, and it isn't the sha256 shown, so nothing is recorded."""
-    fields = form(preview(client, application, [("cv", ("cv.pdf", cv))]).text)
-    key = staged_key(hashlib.sha256(cv).hexdigest(), "cv.pdf")
-    generation = replace_staged(staging, key, b"%PDF some other CV")
-    fields["files"] = re.sub(r'"generation": \d+', f'"generation": {generation}', fields["files"])
+    answers = f"Why us? {uuid.uuid4()}".encode()
+    two = [("cv", ("cv.pdf", cv)), ("answers", ("answers.md", answers))]
+    fields = form(preview(client, application, two).text)
+    key = staged_key(hashlib.sha256(answers).hexdigest(), "answers.md")
+    generation = replace_staged(staging, key, b"Some other answers")
+    files = json.loads(fields["files"])
+    files[1]["generation"] = generation  # answers.md, now the replaced copy
+    fields["files"] = json.dumps(files)
 
     confirm(client, application, fields, typed=str(application))
     run = work(db, registry, lease_watch)
+    # Checked first: even the unchanged first file never reached records.
+    assert_nothing_recorded(engine, gcs_bucket, record_prefix)
     status = client.get(f"/runs/{run.id}").json()
     assert status["status"] == "failed" and "changed after the preview" in status["text"]
-    assert_nothing_recorded(engine, gcs_bucket, record_prefix)
 
 
 def test_the_store_tool_hashes_what_it_read(
