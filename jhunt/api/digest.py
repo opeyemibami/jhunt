@@ -28,7 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import Engine, text
 
-from jhunt.api import applications, facts, live
+from jhunt.api import applications, facts, live, pack
 from jhunt.api.page import page
 from jhunt.jobs.boards import board_job_url
 from jhunt.platform.artifacts import RecordStore
@@ -118,6 +118,7 @@ def create_app(
 
     applications.add_routes(app, engine, records, from_this_page)
     facts.add_routes(app, engine)
+    pack.add_routes(app, engine, registry, config_dir, from_this_page)
 
     @app.get("/runs/{run_id}")
     def run_status(run_id: int) -> JSONResponse:

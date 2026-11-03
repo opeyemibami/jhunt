@@ -81,6 +81,14 @@ button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
 form.inline { display: inline; }
 .nowrap { white-space: nowrap; }
+.side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
+.side-by-side section { background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: .4rem 1rem 1rem; min-width: 0; }
+.side-by-side h2 { margin-top: .6rem; }
+h3 { font-size: .95rem; margin: 1rem 0 .4rem; }
+textarea { width: 100%; font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: .5rem .6rem; }
+ul.lines p { margin: .2rem 0; }
 ol.cards { list-style: none; padding: 0; margin: 1rem 0; display: grid; gap: .6rem; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: .8rem 1rem; display: flex; gap: var(--gap); align-items: flex-start; }
@@ -125,6 +133,7 @@ ul.plain ul.plain li { border-top: none; padding: .1rem 0 .1rem 1rem; color: var
   .top-inner { gap: .8rem; padding: .6rem .8rem; }
   main { padding: 1rem .8rem 3rem; }
   .card { flex-direction: column; gap: .5rem; }
+  .side-by-side { grid-template-columns: 1fr; }
   .card-side { flex-direction: row-reverse; align-items: center; justify-content: space-between;
     width: 100%; }
   .card-actions { justify-content: flex-start; text-align: left; }

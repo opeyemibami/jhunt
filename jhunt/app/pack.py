@@ -17,7 +17,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from jhunt.app.registry import build_registry
 from jhunt.platform.config import get_settings
-from jhunt.platform.runtime.threads import ThreadExists, enqueue_start
+from jhunt.platform.runtime.threads import ThreadExists
 from jhunt.workflows import application_pack
 from jhunt.workflows.application_pack import (
     PackConfig,
@@ -38,28 +38,14 @@ def main() -> None:
 
     settings = get_settings()
     engine = create_engine(settings.database_url())
-    with engine.connect() as conn:
-        found = conn.execute(
-            text("SELECT 1 FROM applications WHERE id = :id"), {"id": args.application_id}
-        ).first()
-        if found is None:
-            raise SystemExit(f"jhunt-pack: no application {args.application_id}")
-        # A new thread for each request: pack-<id>-<n>, n one more than the last.
-        earlier = conn.execute(
-            text("SELECT count(*) FROM threads WHERE thread_id LIKE :p"),
-            {"p": f"pack-{args.application_id}-%"},
-        ).scalar_one()
-    thread_id = application_pack.thread_id_for(args.application_id, earlier + 1)
-    try:
-        enqueue_start(
-            engine,
-            build_registry(settings, engine),
-            thread_id,
-            application_pack.WORKFLOW,
-            {"application_id": args.application_id},
+    try:  # a new thread for each request: pack-<id>-<n> (shared with the web page)
+        thread_id = application_pack.start_draft(
+            engine, build_registry(settings, engine), args.application_id
         )
-    except ThreadExists:  # another jhunt-pack took that number just now
-        raise SystemExit(f"jhunt-pack: {thread_id} was just queued by another request") from None
+    except LookupError:
+        raise SystemExit(f"jhunt-pack: no application {args.application_id}") from None
+    except ThreadExists:  # another request took that number just now
+        raise SystemExit("jhunt-pack: that draft was just queued by another request") from None
     print(f"queued: thread {thread_id}")
     if args.wait:
         draft_id = _wait(engine, thread_id)
