@@ -43,7 +43,7 @@ Any other key, or any other top-level table, is refused. `[[facts]]` gets a hint
    - **retired facts still in the file**, which stay retired. Import never brings a retired fact back.
 5. It prints the plan. If anything is to be written, it asks for `yes`, then writes all the versions in one transaction, holding a lock on `facts` so two imports can't number a version twice.
 
-**`jhunt-facts retire ID`**: a new version with status `retired`, its other fields copied from the latest. A retired fact is never citable again unless a later version un-retires it, and only the Facts page (later) will do that.
+**`jhunt-facts retire ID`**: a new version with status `retired`, its other fields copied from the latest. A retired fact is never citable again unless a later version un-retires it. Nothing does that yet: it's a backlog item for the Facts page (ADR 0017).
 
 **`jhunt-facts list`**: each fact's latest version, with its status.
 
