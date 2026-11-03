@@ -77,7 +77,7 @@ def summary(state: Mapping[str, Any]) -> list[str]:
     failed = state.get("failed", {})
     lines = [
         f"scout {state['day']}: {len(state['sources'])} boards, {len(failed)} failed",
-        f"postings: {sum(c['new'] for c in stored)} new,"
+        f"postings: {sum(c['new'] for c in stored)} first seen in this run,"
         f" {sum(c['seen_again'] for c in stored)} seen again,"
         f" {sum(c['in_scope'] for c in stored)} in scope",
         f"removed: {state.get('removed', 0)} unseen for {UNSEEN_DAYS} days",

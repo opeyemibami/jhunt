@@ -149,7 +149,12 @@ def test_a_draft_shows_accepted_and_blocked_side_by_side(
     assert "50%" not in accepted
     # Every blocked claim, as drafted, with its reasons.
     assert "Cut inference cost by 50% at Acme" in blocked
-    assert "number &#x27;50%&#x27; is not in its cited facts" in blocked
+    # Each reason on its own line under the blocked text, in plain words.
+    assert re.search(
+        r"Cut inference cost by 50% at Acme</p>\s*<p class=\"problem\">"
+        r"Says &#x27;50%&#x27;, but no cited fact has that number</p>",
+        blocked,
+    )
 
 
 def test_the_cover_note_can_be_copied(engine: Engine, client: TestClient) -> None:
@@ -191,7 +196,7 @@ def test_an_edit_is_a_new_version_and_the_validator_warns_but_never_blocks(
 
     page = client.get(f"/drafts/{draft_id}").text
     assert "Cut Acme&#x27;s inference cost by 40%" in page and "edited by you · v2" in page
-    assert "Warning: number &#x27;40%&#x27; is not in its cited facts" in page
+    assert "Warning: Says &#x27;40%&#x27;, but no cited fact has that number" in page
 
 
 def test_an_edited_cover_note_sentence_is_what_gets_copied(
@@ -223,3 +228,28 @@ def test_bad_requests_are_refused(engine: Engine, client: TestClient) -> None:
     no_origin = client.post(f"/drafts/{draft_id}/edit", follow_redirects=False, data=form)
     assert no_origin.status_code == 403
     assert client.post("/applications/1/pack", follow_redirects=False).status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("problem", "plain"),
+    [
+        ("cites no fact", "Cites no fact, so nothing supports it"),
+        ("cites unknown fact 'x'", "Cites 'x', which isn't in your fact bank"),
+        ("fact 'x' is draft, not verified", "Cites 'x', which you haven't verified (draft)"),
+        ("mentions unverified skill 'skill-x' (draft)",
+         "Names a skill you haven't verified (skill-x)"),
+        ("number '50%' is not in its cited facts", "Says '50%', but no cited fact has that number"),
+        ("spelled-out number 'five' is not in its cited facts",
+         "Says 'five', but no cited fact has that number"),
+        ("states built, above 'skill-sglang' (used): 'built'",
+         "Says 'built' but the fact only supports 'used' (skill-sglang)"),
+        ("states production, above 'skill-k8s' (used): 'in production' (mentioned, not cited)",
+         "Says 'in production' but the fact only supports 'used' (skill-k8s, named but not"
+         " cited)"),
+        ("something new", "something new"),  # unknown wording: shown as it is
+    ],
+)  # fmt: skip
+def test_reasons_in_plain_words(problem: str, plain: str) -> None:
+    from jhunt.api.pack import plain_reason
+
+    assert plain_reason(problem) == plain

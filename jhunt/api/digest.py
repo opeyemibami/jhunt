@@ -20,6 +20,8 @@ browser can't post one. Board text is data: every value is escaped.
 import contextlib
 import html
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -77,7 +79,8 @@ def create_app(
             None if latest is None else live.run_status(engine, conninfo, registry, latest.run_id)
         )
         shown = "" if found is None else found["text"]
-        return _render(**_load(engine), latest=latest, shown=shown, problem=problems.get("scout"))
+        return _render(**_load(engine, today()), latest=latest, shown=shown,
+                       problem=problems.get("scout"))  # fmt: skip
 
     @app.post("/postings/{posting_id}/capture")
     def capture_posting(posting_id: int, request: Request) -> RedirectResponse:
@@ -94,7 +97,7 @@ def create_app(
 
     @app.get("/hidden", response_class=HTMLResponse)
     def hidden() -> str:
-        return page("Hidden", _hidden(scout.hidden_postings(engine)), current="/")
+        return page("Hidden", _hidden(scout.hidden_postings(engine)), current="/hidden")
 
     @app.post("/hidden/{dedupe_key}/undo")
     def undo_hide(dedupe_key: str, request: Request) -> RedirectResponse:
@@ -162,7 +165,7 @@ def _start_capture(engine: Engine, registry: Registry, posting_id: int) -> None:
         )
 
 
-def _load(engine: Engine) -> dict[str, Any]:
+def _load(engine: Engine, day: str) -> dict[str, Any]:
     with engine.connect() as conn:
         hidden_by_you = scout.hidden_keys(conn)  # "Not interested", for good
         postings = conn.execute(
@@ -182,8 +185,8 @@ def _load(engine: Engine) -> dict[str, Any]:
             {"hidden": list(hidden_by_you)},
         ).all()
         hidden = conn.execute(text("SELECT count(*) FROM postings WHERE NOT in_scope")).scalar_one()
-        # When the latest successful Scout run was queued: a posting first seen
-        # since is New; one not seen since is No longer listed.
+        # When the latest successful Scout run was queued: a posting not seen
+        # since is No longer listed. Every run fetches, a Rescore too.
         last_run = conn.execute(
             text(
                 "SELECT max(created_at) FROM runs WHERE workflow = 'scout' AND status = 'succeeded'"
@@ -201,18 +204,36 @@ def _load(engine: Engine) -> dict[str, Any]:
                 {"threads": threads},
             )
         }
-    rows = [(p, captures.get(t), last_run) for p, t in zip(postings, threads, strict=True)]
+    # New: first seen today (UTC), whichever of today's runs saw it first
+    # (owner): a Rescore later in the day doesn't take the badge away.
+    midnight = datetime.fromisoformat(day).replace(tzinfo=UTC)
+    seen = Seen(midnight, last_run)
+    rows = [(p, captures.get(t), seen) for p, t in zip(postings, threads, strict=True)]
+    excluded = [r for r in rows if "exclude" in (r[0].fit_matches or {})]
+    rows = [r for r in rows if r not in excluded]
     return {
         "matched": [r for r in rows if "title" in (r[0].fit_matches or {})],
         "other": [r for r in rows if "title" not in (r[0].fit_matches or {})],
+        "excluded": excluded,
+        "new_today": sum(p.first_seen_at >= midnight for p in postings),
         "hidden": hidden,
         "hidden_by_you": len(hidden_by_you),
     }
 
 
+@dataclass(frozen=True)
+class Seen:
+    """What a job card's badges are measured against."""
+
+    midnight: datetime  # today's start, UTC: first seen since is New
+    last_run: datetime | None  # the latest successful Scout run: not seen since is gone
+
+
 def _render(
     matched: list[Any],
     other: list[Any],
+    excluded: list[Any],
+    new_today: int,
     hidden: int,
     hidden_by_you: int,
     latest: scout.Today | None,
@@ -227,11 +248,16 @@ def _render(
     )
     body = f"""
 <h1>Scout digest</h1>
-<p class="meta">{len(matched)} title matches · {len(other)} other in scope · {out_of_scope}</p>
+<p class="meta">{new_today} new today · {len(matched)} title matches ·
+ {len(other)} other in scope · {out_of_scope}</p>
 {_scout_panel(latest, shown, problem)}
 <ol class="cards">{"".join(_row(*r) for r in matched)}</ol>
 <details><summary>Other in-scope jobs ({len(other)})</summary>
 <ol class="cards">{"".join(_row(*r) for r in other)}</ol>
+</details>
+<details><summary>Excluded by your targets ({len(excluded)})</summary>
+<p class="meta">Their titles have a word from [exclude] in config/targets.toml.</p>
+<ul class="plain">{"".join(_excluded(p) for p, _, _ in excluded)}</ul>
 </details>"""
     return page("Digest", body, current="/", waiting=active)
 
@@ -262,7 +288,16 @@ def _scout_panel(latest: scout.Today | None, shown: str, problem: str | None) ->
     return f'<section id="scout" class="panel"><h2>Scout</h2>{"".join(lines)}</section>'
 
 
-def _row(p: Any, run: Any, last_run: Any) -> str:
+def _excluded(p: Any) -> str:
+    e = html.escape
+    title = e(p.title)
+    if urlsplit(p.url).scheme in ("http", "https"):
+        title = f'<a href="{e(p.url)}" rel="noreferrer">{title}</a>'
+    words = ", ".join(f"'{w}'" for w in p.fit_matches["exclude"])
+    return f"<li>{title} · {e(p.company or '')} · title has {e(words)}</li>"
+
+
+def _row(p: Any, run: Any, seen: Seen) -> str:
     """One job card: the title prominent, company and location secondary,
     the score as a badge, matched words as tags, actions on the right."""
     e = html.escape
@@ -273,10 +308,10 @@ def _row(p: Any, run: Any, last_run: Any) -> str:
     else:
         title_html = f'<span class="title">{title}</span>'
     badges = ""
-    if last_run is not None:
-        if p.first_seen_at >= last_run:
+    if seen.last_run is not None:  # no badges before Scout has run
+        if p.first_seen_at >= seen.midnight:
             badges += '<span class="badge badge-new">New</span>'
-        elif p.last_seen_at < last_run:
+        elif p.last_seen_at < seen.last_run:
             badges += '<span class="badge badge-gone">No longer listed</span>'
     found = p.fit_matches or {}
     tags = "".join(

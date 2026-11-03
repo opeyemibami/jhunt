@@ -103,7 +103,7 @@ def test_scout_stores_every_posting_and_lists_the_board_that_failed(
     assert "board not found" in state["failed"]["ashby:gone"]
     assert scout.summary(state) == [
         f"scout {DAY}: 3 boards, 1 failed",
-        "postings: 3 new, 0 seen again, 2 in scope",
+        "postings: 3 first seen in this run, 0 seen again, 2 in scope",
         "removed: 0 unseen for 30 days",
         "failed: ashby:gone: " + state["failed"]["ashby:gone"],
     ]

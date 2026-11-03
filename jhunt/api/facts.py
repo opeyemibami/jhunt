@@ -106,6 +106,17 @@ def _row(f: FactVersion) -> str:
     )
 
 
+def _evidence(f: FactVersion) -> str:
+    """A verified fact needs evidence (ADR 0014): the form says so, and the
+    save is refused without it either way."""
+    if f.status == "verified":
+        return (
+            '<label>Evidence (required) <input name="evidence"'
+            f' value="{e(f.evidence or "")}" required></label>'
+        )
+    return f'<label>Evidence <input name="evidence" value="{e(f.evidence or "")}"></label>'
+
+
 def _forms(f: FactVersion) -> str:
     skill = ""
     if f.kind == "skill":
@@ -122,7 +133,7 @@ def _forms(f: FactVersion) -> str:
 <form method="post" action="/facts/{e(f.fact_id)}/edit" class="fact-form">
 <input type="hidden" name="version" value="{f.version}">
 <label>Text <textarea name="text" rows="3">{e(f.text)}</textarea></label>
-<label>Evidence <input name="evidence" value="{e(f.evidence or "")}"></label>
+{_evidence(f)}
 {skill}
 <p><button type="submit" class="primary">Save as a new version</button></p></form>
 <form method="post" action="/facts/{e(f.fact_id)}/retire" class="fact-form">

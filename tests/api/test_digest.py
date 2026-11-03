@@ -136,8 +136,10 @@ def test_title_matches_come_first_by_score_and_the_rest_are_collapsed(
         "AI Engineer",
         "Staff ML Engineer",
     ]
-    assert titles(other) == ["Data Scientist", "Analyst", "Office Manager"]
-    assert "Other in-scope jobs (3)" in other
+    other, excluded = other.split("Excluded by your targets", 1)
+    assert titles(other) == ["Data Scientist", "Analyst"]
+    assert "Other in-scope jobs (2)" in other
+    assert "Office Manager" in excluded  # [exclude] word "manager": set aside (owner)
     assert "<details open" not in html  # collapsed
     # Out-of-scope postings: counted, never listed
     assert "2 out-of-scope postings hidden" in html
@@ -154,14 +156,14 @@ def test_each_posting_shows_its_score_and_what_matched(engine: Engine, client: T
         in html
     )
     assert '<span class="tag tag-penalty">staff ml</span>' in html
-    assert '<span class="tag tag-exclude">manager</span>' in html
+    assert "Office Manager</a> · Acme · title has &#x27;manager&#x27;" in html
     assert 'href="https://job-boards.greenhouse.io/acme/jobs/2"' in html
 
 
 def test_unscored_postings_are_listed_last(engine: Engine, client: TestClient) -> None:
     upsert_postings(engine, [posting("8", "Unscored Job", None, None), *POSTINGS[2:4]])
     _, other = page(client).split("<details", 1)
-    assert titles(other) == ["Data Scientist", "Office Manager", "Unscored Job"]
+    assert titles(other.split("Excluded by your targets")[0]) == ["Data Scientist", "Unscored Job"]
 
 
 def test_board_text_is_escaped_and_only_web_links_are_links(
