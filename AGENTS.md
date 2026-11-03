@@ -175,6 +175,7 @@ Backups: a nightly `pg_dump` goes off the server (GCS already keeps the objects)
 - The task would change the autonomy policy, a guarantee, the import boundary or a service account scope.
 - The design is silent or ambiguous on behaviour that is hard to undo.
 - A test is flaky and the only fix you see is a retry or a longer sleep.
+- Never run docker compose, jhunt-up or jhunt-down against the owner's dev setup (the default compose project), and never stop or recreate the dev database, unless the owner asks in this conversation. Tests use jhunt-test-* projects only.
 
 ## Pull requests
 
