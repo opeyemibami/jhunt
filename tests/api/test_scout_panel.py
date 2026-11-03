@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import URL, Engine, create_engine, pool, text
 
 from jhunt.api.digest import create_app
+from jhunt.platform.artifacts import RecordStore
 from jhunt.platform.gateway import ToolGateway
 from jhunt.platform.runtime import queue
 from jhunt.platform.runtime.registry import Registry
@@ -60,7 +61,13 @@ def registry(db: tuple[Engine, str]) -> Registry:
 def client(db: tuple[Engine, str], registry: Registry, config_dir: Path) -> Iterator[TestClient]:
     engine, info = db
     app = create_app(
-        engine, registry, port=PORT, config_dir=config_dir, conninfo=info, today=lambda: DAY
+        engine,
+        registry,
+        port=PORT,
+        config_dir=config_dir,
+        conninfo=info,
+        today=lambda: DAY,
+        records=RecordStore("unused"),
     )
     with TestClient(app, base_url=ORIGIN) as c:
         yield c

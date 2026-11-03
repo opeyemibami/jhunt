@@ -13,6 +13,7 @@ from sqlalchemy import URL, Engine, create_engine, pool, text
 
 from jhunt.api.digest import create_app
 from jhunt.jobs.dedupe import board_job_key
+from jhunt.platform.artifacts import RecordStore
 from jhunt.platform.gateway import ToolGateway
 from jhunt.platform.runtime.registry import Registry
 from jhunt.workflows import capture
@@ -27,7 +28,8 @@ REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
 
 def app_for(engine: Engine, registry: Registry):  # type: ignore[no-untyped-def]
     conninfo = engine.url.set(drivername="postgresql").render_as_string(hide_password=False)
-    return create_app(engine, registry, port=PORT, config_dir=REPO_CONFIG, conninfo=conninfo)
+    return create_app(engine, registry, port=PORT, config_dir=REPO_CONFIG, conninfo=conninfo,
+                      records=RecordStore("unused"))  # fmt: skip
 
 
 ORIGIN = f"http://127.0.0.1:{PORT}"
@@ -230,7 +232,8 @@ def test_a_captured_posting_links_its_application_instead_of_a_button(
         snapshot=refs,
     )
     html = page(client)
-    assert f"Captured: application {application_id}" in html
+    link = f'<a href="/applications/{application_id}">application {application_id}</a>'
+    assert f"Captured: {link}" in html
     row = html[html.index('id="posting-') :]  # the posting, not the Scout panel
     assert "<button" not in row
 
@@ -255,7 +258,8 @@ def test_a_submitted_application_shows_its_latest_submission(
             submitted_at=f"{day}T09:00:00+00:00", files=[cv],
         )  # fmt: skip
     html = page(client)
-    assert f"Captured: application {application_id} · Submitted 2026-11-03 via &lt;site&gt;" in html
+    link = f'<a href="/applications/{application_id}">application {application_id}</a>'
+    assert f"Captured: {link} · Submitted 2026-11-03 via &lt;site&gt;" in html
     assert "2026-11-01" not in html
 
 

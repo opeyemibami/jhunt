@@ -11,6 +11,7 @@ from sqlalchemy import create_engine
 
 from jhunt.api.digest import create_app
 from jhunt.app.registry import build_registry
+from jhunt.platform.artifacts import RecordStore
 from jhunt.platform.config import get_settings
 
 HOST = "127.0.0.1"
@@ -26,5 +27,6 @@ def main() -> None:
         port=settings.jhunt_api_port,
         config_dir=settings.jhunt_config_dir,
         conninfo=conninfo.render_as_string(hide_password=False),
+        records=RecordStore(settings.gcs_records_bucket or ""),
     )
     uvicorn.run(app, host=HOST, port=settings.jhunt_api_port)

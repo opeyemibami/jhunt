@@ -28,8 +28,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import Engine, text
 
-from jhunt.api import live
+from jhunt.api import applications, live
+from jhunt.api.page import page
 from jhunt.jobs.boards import board_job_url
+from jhunt.platform.artifacts import RecordStore
 from jhunt.platform.runtime.registry import Registry
 from jhunt.platform.runtime.threads import ThreadExists, enqueue_start
 from jhunt.workflows import capture, scout
@@ -45,6 +47,7 @@ def create_app(
     port: int,
     config_dir: Path,
     conninfo: str,
+    records: RecordStore,
     today: Callable[[], str] = scout.utc_today,
 ) -> FastAPI:
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
@@ -94,6 +97,8 @@ def create_app(
         except (scout.SourcesError, scout.ScopeError, scout.TargetsError) as exc:
             problems["scout"] = str(exc)
         return RedirectResponse("/#scout", status_code=303)
+
+    applications.add_routes(app, engine, records)
 
     @app.get("/runs/{run_id}")
     def run_status(run_id: int) -> JSONResponse:
@@ -184,24 +189,15 @@ def _render(
     active = (latest is not None and latest.status in live.ACTIVE) or any(
         run is not None and run.status in live.ACTIVE for _, run in matched + other
     )
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scout digest</title>
-{live.NOSCRIPT_REFRESH if active else ""}
-<style>{_CSS}</style></head>
-<body><main>
+    body = f"""
 <h1>Scout digest</h1>
 <p class="meta">{len(matched)} title matches · {len(other)} other in scope · {out_of_scope}</p>
 {_scout_panel(latest, shown, problem)}
 <ol class="postings">{"".join(_row(p, run) for p, run in matched)}</ol>
 <details><summary>Other in-scope jobs ({len(other)})</summary>
 <ol class="postings">{"".join(_row(p, run) for p, run in other)}</ol>
-</details>
-</main>
-{live.SCRIPT}
-</body></html>
-"""
+</details>"""
+    return page("Scout digest", body, waiting=active)
 
 
 def _scout_panel(latest: scout.Today | None, shown: str, problem: str | None) -> str:
@@ -256,7 +252,8 @@ def _row(p: Any, run: Any) -> str:
 
 def _action(p: Any, run: Any) -> str:
     if p.application_id is not None:
-        captured = f"Captured: application {p.application_id}"
+        link = f'<a href="/applications/{p.application_id}">application {p.application_id}</a>'
+        captured = f"Captured: {link}"
         if p.submitted_at is None:
             return captured
         submitted = f"Submitted {p.submitted_at:%Y-%m-%d} via {html.escape(p.submitted_via)}"
@@ -270,35 +267,3 @@ def _action(p: Any, run: Any) -> str:
         return f"Capture failed: {html.escape(run.error or '')}"
     # Queued or running: the live script updates it in place (ADR 0017).
     return live.status_element(run.id, run.status, run.status, label="Capture ")
-
-
-_CSS = """
-:root { --bg: #fff; --fg: #1c1c1c; --muted: #666; --line: #e3e3e3; --accent: #1d4ed8; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #151515; --fg: #e8e8e8; --muted: #9a9a9a; --line: #2c2c2c; --accent: #8ab4ff; }
-}
-body { margin: 0; background: var(--bg); color: var(--fg);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
-h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
-.meta { color: var(--muted); margin: .15rem 0; }
-ol.postings { list-style: none; padding: 0; margin: 1rem 0; }
-ol.postings li { border-top: 1px solid var(--line); padding: .7rem 0; }
-.head { display: flex; gap: .6rem; align-items: baseline; }
-.score { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 2.6rem; }
-a.title { color: var(--accent); text-decoration: none; font-weight: 600; }
-a.title:hover { text-decoration: underline; }
-span.title { font-weight: 600; }
-li .meta, .matched, .action { margin-left: 3.2rem; }
-.matched { font-size: .9rem; }
-.action { margin-top: .3rem; font-size: .9rem; color: var(--muted); }
-button { font: inherit; padding: .2rem .8rem; cursor: pointer; }
-details { margin-top: 1.5rem; }
-section.scout { border: 1px solid var(--line); border-radius: 6px; padding: .2rem 1rem;
-  margin: 1rem 0; }
-section.scout h2 { font-size: 1rem; margin: .6rem 0 .2rem; }
-.live { white-space: pre-line; }
-.problem { color: #b42318; }
-form.inline { display: inline; }
-summary { cursor: pointer; font-weight: 600; }
-"""
