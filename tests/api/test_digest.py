@@ -148,10 +148,13 @@ def test_each_posting_shows_its_score_and_what_matched(engine: Engine, client: T
     upsert_postings(engine, POSTINGS)
     html = page(client)
     assert "0.82" in html
-    assert "title: ml engineer" in html
-    assert "include: llm, python" in html
-    assert "penalty: staff ml" in html
-    assert "exclude: manager" in html
+    assert '<span class="tag tag-title">ml engineer</span>' in html
+    assert (
+        '<span class="tag tag-include">llm</span><span class="tag tag-include">python</span>'
+        in html
+    )
+    assert '<span class="tag tag-penalty">staff ml</span>' in html
+    assert '<span class="tag tag-exclude">manager</span>' in html
     assert 'href="https://job-boards.greenhouse.io/acme/jobs/2"' in html
 
 

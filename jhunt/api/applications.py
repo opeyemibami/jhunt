@@ -28,7 +28,7 @@ e = html.escape
 def add_routes(app: FastAPI, engine: Engine, records: RecordStore) -> None:
     @app.get("/applications", response_class=HTMLResponse)
     def applications() -> str:
-        return page("Applications", _list(_applications(engine)))
+        return page("Applications", _list(_applications(engine)), current="/applications")
 
     @app.get("/applications/{application_id}", response_class=HTMLResponse)
     def application(application_id: int) -> str:
@@ -36,7 +36,9 @@ def add_routes(app: FastAPI, engine: Engine, records: RecordStore) -> None:
         if found is None:
             raise HTTPException(404, "no such application")
         job = _job_description(records, found)
-        return page(f"{found.company}, {found.role}", _detail(engine, found, job))
+        return page(
+            f"{found.company}, {found.role}", _detail(engine, found, job), current="/applications"
+        )
 
 
 def _applications(engine: Engine) -> list[Any]:
@@ -84,7 +86,7 @@ def _list(rows: list[Any]) -> str:
         )
         body.append(
             f'<tr><td><a href="/applications/{r.id}">{e(r.company)}</a></td><td>{e(r.role)}</td>'
-            f"<td>{e(r.stage)}</td><td>{r.opened_at:%Y-%m-%d}</td>"
+            f'<td>{e(r.stage)}</td><td class="nowrap">{r.opened_at:%Y-%m-%d}</td>'
             f"<td>{submitted}</td><td>{drafted}</td></tr>"
         )
     return (

@@ -28,7 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import Engine, text
 
-from jhunt.api import applications, live
+from jhunt.api import applications, facts, live
 from jhunt.api.page import page
 from jhunt.jobs.boards import board_job_url
 from jhunt.platform.artifacts import RecordStore
@@ -99,6 +99,7 @@ def create_app(
         return RedirectResponse("/#scout", status_code=303)
 
     applications.add_routes(app, engine, records)
+    facts.add_routes(app, engine)
 
     @app.get("/runs/{run_id}")
     def run_status(run_id: int) -> JSONResponse:
@@ -144,8 +145,9 @@ def _load(engine: Engine) -> dict[str, Any]:
     with engine.connect() as conn:
         postings = conn.execute(
             text(
-                "SELECT p.id, p.dedupe_key, p.url, p.title, p.company, p.scope_reason,"
-                " p.fit_score, p.fit_matches, a.id AS application_id,"
+                "SELECT p.id, p.dedupe_key, p.url, p.title, p.company, p.location,"
+                " p.scope_reason, p.fit_score, p.fit_matches, p.first_seen_at, p.last_seen_at,"
+                " a.id AS application_id,"
                 " s.submitted_at, s.channel AS submitted_via"
                 " FROM postings p LEFT JOIN applications a ON a.dedupe_key = p.dedupe_key"
                 # The latest submission counts (ADR 0013).
@@ -157,6 +159,13 @@ def _load(engine: Engine) -> dict[str, Any]:
             )
         ).all()
         hidden = conn.execute(text("SELECT count(*) FROM postings WHERE NOT in_scope")).scalar_one()
+        # When the latest successful Scout run was queued: a posting first seen
+        # since is New; one not seen since is No longer listed.
+        last_run = conn.execute(
+            text(
+                "SELECT max(created_at) FROM runs WHERE workflow = 'scout' AND status = 'succeeded'"
+            )
+        ).scalar_one()
         threads = [capture.thread_id_for(p.dedupe_key) for p in postings]
         # Each posting's latest Capture run, if any.
         captures = {
@@ -169,7 +178,7 @@ def _load(engine: Engine) -> dict[str, Any]:
                 {"threads": threads},
             )
         }
-    rows = [(p, captures.get(t)) for p, t in zip(postings, threads, strict=True)]
+    rows = [(p, captures.get(t), last_run) for p, t in zip(postings, threads, strict=True)]
     return {
         "matched": [r for r in rows if "title" in (r[0].fit_matches or {})],
         "other": [r for r in rows if "title" not in (r[0].fit_matches or {})],
@@ -187,17 +196,17 @@ def _render(
 ) -> str:
     out_of_scope = f"{hidden} out-of-scope posting{'' if hidden == 1 else 's'} hidden"
     active = (latest is not None and latest.status in live.ACTIVE) or any(
-        run is not None and run.status in live.ACTIVE for _, run in matched + other
+        run is not None and run.status in live.ACTIVE for _, run, _ in matched + other
     )
     body = f"""
 <h1>Scout digest</h1>
 <p class="meta">{len(matched)} title matches · {len(other)} other in scope · {out_of_scope}</p>
 {_scout_panel(latest, shown, problem)}
-<ol class="postings">{"".join(_row(p, run) for p, run in matched)}</ol>
+<ol class="cards">{"".join(_row(*r) for r in matched)}</ol>
 <details><summary>Other in-scope jobs ({len(other)})</summary>
-<ol class="postings">{"".join(_row(p, run) for p, run in other)}</ol>
+<ol class="cards">{"".join(_row(*r) for r in other)}</ol>
 </details>"""
-    return page("Scout digest", body, waiting=active)
+    return page("Digest", body, current="/", waiting=active)
 
 
 def _scout_panel(latest: scout.Today | None, shown: str, problem: str | None) -> str:
@@ -208,7 +217,7 @@ def _scout_panel(latest: scout.Today | None, shown: str, problem: str | None) ->
     def button(mode: str, label: str) -> str:
         return (
             f'<form method="post" action="/scout/{mode}" class="inline">'
-            f'<button type="submit">{label}</button></form>'
+            f'<button type="submit" class="primary">{label}</button></form>'
         )
 
     lines = []
@@ -223,30 +232,42 @@ def _scout_panel(latest: scout.Today | None, shown: str, problem: str | None) ->
             f"<p>Today's run ({html.escape(latest.thread_id)}): {state}"
             f" {action.get(latest.status, '')}</p>"
         )
-    return f'<section id="scout" class="scout"><h2>Scout</h2>{"".join(lines)}</section>'
+    return f'<section id="scout" class="panel"><h2>Scout</h2>{"".join(lines)}</section>'
 
 
-def _row(p: Any, run: Any) -> str:
+def _row(p: Any, run: Any, last_run: Any) -> str:
+    """One job card: the title prominent, company and location secondary,
+    the score as a badge, matched words as tags, actions on the right."""
     e = html.escape
-    score = "-" if p.fit_score is None else f"{p.fit_score:.2f}"
     title = e(p.title)
     # Only web links are links: a board's text could hold javascript: or worse.
     if urlsplit(p.url).scheme in ("http", "https"):
         title_html = f'<a class="title" href="{e(p.url)}" rel="noreferrer">{title}</a>'
     else:
         title_html = f'<span class="title">{title}</span>'
+    badges = ""
+    if last_run is not None:
+        if p.first_seen_at >= last_run:
+            badges += '<span class="badge badge-new">New</span>'
+        elif p.last_seen_at < last_run:
+            badges += '<span class="badge badge-gone">No longer listed</span>'
     found = p.fit_matches or {}
-    matched = " · ".join(
-        f"{section}: {e(', '.join(found[section]))}"
+    tags = "".join(
+        f'<span class="tag tag-{section}">{e(word)}</span>'
         for section in _MATCH_SECTIONS
-        if found.get(section)
+        for word in found.get(section, [])
     )
+    score = "-" if p.fit_score is None else f"{p.fit_score:.2f}"
+    where = " · ".join(e(part) for part in (p.company, p.location) if part)
     return f"""
-<li id="posting-{p.id}">
-<div class="head"><span class="score">{score}</span>{title_html}</div>
-<div class="meta">{e(p.company)} · {e(p.scope_reason)}</div>
-<div class="matched">{matched}</div>
-<div class="action">{_action(p, run)}</div>
+<li class="card" id="posting-{p.id}">
+<div class="card-main">
+<h3 class="card-title">{title_html}{badges}</h3>
+<p class="card-meta">{where}</p>
+<div class="tags">{tags}</div>
+</div>
+<div class="card-side"><span class="score" title="Fit score">{score}</span>
+<div class="card-actions">{_action(p, run)}</div></div>
 </li>"""
 
 
@@ -260,8 +281,8 @@ def _action(p: Any, run: Any) -> str:
         return f"{captured} · {submitted}"
     if run is None:
         return (
-            f'<form method="post" action="/postings/{p.id}/capture">'
-            '<button type="submit">Capture</button></form>'
+            f'<form method="post" action="/postings/{p.id}/capture" class="inline">'
+            '<button type="submit" class="primary">Capture</button></form>'
         )
     if run.status == "failed":
         return f"Capture failed: {html.escape(run.error or '')}"
