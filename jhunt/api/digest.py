@@ -117,7 +117,7 @@ def create_app(
         return RedirectResponse("/#scout", status_code=303)
 
     applications.add_routes(app, engine, records, from_this_page)
-    facts.add_routes(app, engine)
+    facts.add_routes(app, engine, from_this_page)
     pack.add_routes(app, engine, registry, config_dir, from_this_page)
 
     @app.get("/runs/{run_id}")

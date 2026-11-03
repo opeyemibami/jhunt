@@ -89,6 +89,11 @@ h3 { font-size: .95rem; margin: 1rem 0 .4rem; }
 textarea { width: 100%; font: inherit; color: var(--fg); background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px; padding: .5rem .6rem; }
 ul.lines p { margin: .2rem 0; }
+.fact-form label { display: block; margin: .5rem 0; font-size: .9rem; color: var(--muted); }
+.fact-form input, .fact-form select { display: block; width: 100%; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .35rem .6rem;
+  margin-top: .2rem; }
+.fact-form textarea { display: block; margin-top: .2rem; }
 ol.cards { list-style: none; padding: 0; margin: 1rem 0; display: grid; gap: .6rem; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: .8rem 1rem; display: flex; gap: var(--gap); align-items: flex-start; }

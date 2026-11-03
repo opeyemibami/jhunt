@@ -39,7 +39,7 @@ Decisions:
 - Tool gateway: add the side-effect assertion to `tests/guarantees/test_worker_crash.py` ("side effects once"): a side effect in the interrupted step runs once across the crash and the resume. (Week 1 plan review)
 - Sources move from docs/sources.md into a sources table that Scout reads, editable from a Sources page in the web app (add, pause, remove; adding checks the endpoint). docs/sources.md stays as the seed data and the record of terms checked. (docs/sources.md PR)
 - Profiles page: create and edit search profiles in the browser, with the targets, sources and scope of each. It replaces the Targets page item: targets are per profile. Each version is kept, and saving re-scores stored postings for that profile. (Owner, PR 3.6a review)
-- Facts page: add, edit and retire facts in the browser. An edit creates a new version and never overwrites; drafts keep citing the version they used. Only the owner writes facts; drafts may suggest a missing fact, which the owner adds. (Owner, 2026-11-01)
+- Facts page, the rest: add a fact, un-retire one, and change status or verified date in the browser (U6 edits text, evidence, level and aliases, and retires; ADR 0017). Drafts may suggest a missing fact, which the owner adds. (Owner, 2026-11-01)
 - WSL isn't always on. Before Scout's daily 07:00 run, decide between keeping the PC awake and moving the worker to Cloud Run early. (PR 2 review)
 
 ## Weeks 9 to 10
