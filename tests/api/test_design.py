@@ -6,6 +6,7 @@ listed" badges."""
 
 import re
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -52,14 +53,15 @@ def posting(job_id: str, title: str, *, location: str = "Dublin, Ireland") -> Po
     )  # fmt: skip
 
 
-def scout_run(engine: Engine, created_at: datetime) -> None:
+def scout_run(engine: Engine, created_at: datetime, attempt: int = 1) -> None:
+    thread = f"scout-{created_at:%Y-%m-%d}" + ("" if attempt == 1 else f"-{attempt}")
     with engine.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO runs (thread_id, workflow, version, kind, payload, status, created_at)"
                 " VALUES (:t, 'scout', 2, 'start', '{}', 'succeeded', :c)"
             ),
-            {"t": f"scout-{created_at:%Y-%m-%d}", "c": created_at},
+            {"t": thread, "c": created_at},
         )
 
 
@@ -78,12 +80,12 @@ def card(html: str, job_id: str) -> str:
 
 
 def test_every_page_has_the_same_top_navigation(engine: Engine, client: TestClient) -> None:
-    for path in ("/", "/applications", "/facts"):
+    for path in ("/", "/hidden", "/applications", "/facts"):
         page = client.get(path)
         assert page.status_code == 200, path
         nav = page.text[page.text.index("<nav") : page.text.index("</nav>")]
         assert [label for _, label in re.findall(r'href="([^"]+)"[^>]*>([^<]+)<', nav)] == [
-            "Digest", "Applications", "Facts",
+            "Digest", "Hidden", "Applications", "Facts",
         ]  # fmt: skip
 
 
@@ -122,19 +124,50 @@ def test_a_job_card(engine: Engine, client: TestClient) -> None:
     assert '<div class="card-actions">' in one and "Capture" in one
 
 
-def test_new_and_no_longer_listed_badges(engine: Engine, client: TestClient) -> None:
+DAY = datetime(2026, 11, 3, tzinfo=UTC)
+
+
+@pytest.fixture
+def on_the_day(engine: Engine) -> Iterator[TestClient]:
+    """The digest on 2026-11-03 (UTC)."""
+    conninfo = engine.url.set(drivername="postgresql").render_as_string(hide_password=False)
+    app = create_app(engine, Registry(), port=PORT, config_dir=REPO_CONFIG, conninfo=conninfo,
+                     records=RecordStore("unused"), today=lambda: "2026-11-03")  # fmt: skip
+    with TestClient(app, base_url=ORIGIN) as c:
+        yield c
+
+
+def test_new_means_first_seen_today_and_a_rescore_keeps_it(
+    engine: Engine, on_the_day: TestClient
+) -> None:
     upsert_postings(engine, [posting(j, f"Job {j}") for j in ("1", "2", "3")])
-    run_at = datetime.now(UTC) - timedelta(hours=1)
-    scout_run(engine, run_at)
-    seen(engine, "1", run_at + timedelta(minutes=1), run_at + timedelta(minutes=1))  # new
-    seen(engine, "2", run_at - timedelta(days=3), run_at + timedelta(minutes=1))  # seen again
-    seen(engine, "3", run_at - timedelta(days=3), run_at - timedelta(days=1))  # not seen today
-    html = client.get("/").text
+    hour = timedelta(hours=1)
+    scout_run(engine, DAY + 7 * hour)  # today's run
+    scout_run(engine, DAY + 10 * hour, attempt=2)  # then a Rescore, which fetches again
+    seen(engine, "1", DAY + 7 * hour, DAY + 10 * hour)  # first seen today, before the rescore
+    seen(engine, "2", DAY - 3 * 24 * hour, DAY + 10 * hour)  # seen before today
+    seen(engine, "3", DAY - 3 * 24 * hour, DAY - 24 * hour)  # not seen today
+    html = on_the_day.get("/").text
 
     assert '<span class="badge badge-new">New</span>' in card(html, "1")
     assert "badge" not in card(html, "2")
     assert '<span class="badge badge-gone">No longer listed</span>' in card(html, "3")
     assert "badge-new" not in card(html, "3")
+    assert "1 new today" in html
+
+
+def test_postings_your_targets_exclude_are_set_aside(engine: Engine, client: TestClient) -> None:
+    sales = posting("1", "Account Executive, EMEA")
+    sales = replace(sales, fit_score=0.0, fit_matches={"exclude": ["account executive"]})
+    upsert_postings(engine, [sales, posting("2", "ML Engineer")])
+    html = client.get("/").text
+    main = html[: html.index("<details")]
+    assert "Account Executive" not in main and "ML Engineer" in main
+    assert "Other in-scope jobs (0)" in html  # not in the other list either
+    excluded = html[html.index("Excluded by your targets (1)") :]
+    assert "<details>" in html[: html.index("Excluded by your targets (1)")][-200:]  # collapsed
+    assert "Account Executive, EMEA" in excluded
+    assert "title has &#x27;account executive&#x27;" in excluded
 
 
 def test_no_badges_before_scout_has_run(engine: Engine, client: TestClient) -> None:

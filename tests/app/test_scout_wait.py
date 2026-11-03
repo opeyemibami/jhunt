@@ -65,7 +65,7 @@ def test_wait_prints_the_summary_when_the_run_succeeds(
     assert lines[0].startswith("queued: thread scout-")
     assert lines[1].endswith(": 0 boards, 0 failed")
     assert lines[2:] == [
-        "postings: 0 new, 0 seen again, 0 in scope",
+        "postings: 0 first seen in this run, 0 seen again, 0 in scope",
         "removed: 0 unseen for 30 days",
     ]
 

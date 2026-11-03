@@ -2,6 +2,7 @@
 aliases, or retire it. Each save is a new version, through the same checks as
 an import, and is marked as made in the browser; older versions are kept."""
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -160,3 +161,17 @@ def test_values_are_escaped(engine: Engine, client: TestClient) -> None:
     edit(client, "role-acme", text="ML <b>engineer</b>")
     page = client.get("/facts").text
     assert "ML &lt;b&gt;engineer&lt;/b&gt;" in page and "<b>engineer" not in page
+
+
+def test_evidence_is_required_in_the_form_and_blank_evidence_is_refused(
+    engine: Engine, client: TestClient
+) -> None:
+    page = client.get("/facts").text
+    form = page[page.index('action="/facts/role-acme/edit"') :]
+    assert re.search(r'<input name="evidence"[^>]* required', form[: form.index("</form>")])
+    assert "Evidence (required)" in form[: form.index("</form>")]
+
+    for blank in ("", "   "):
+        refused = edit(client, "role-acme", text="Senior ML engineer at Acme", evidence=blank)
+        assert refused.status_code == 400 and "a verified fact needs evidence" in refused.text
+    assert [v.version for v in versions(engine, "role-acme")] == [1]

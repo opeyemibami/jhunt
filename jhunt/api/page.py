@@ -11,7 +11,12 @@ import html
 
 from jhunt.api import live
 
-NAV = [("/", "Digest"), ("/applications", "Applications"), ("/facts", "Facts")]
+NAV = [
+    ("/", "Digest"),
+    ("/hidden", "Hidden"),
+    ("/applications", "Applications"),
+    ("/facts", "Facts"),
+]
 
 
 def page(title: str, body: str, *, current: str = "/", waiting: bool = False) -> str:

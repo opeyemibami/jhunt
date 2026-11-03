@@ -12,6 +12,7 @@ drafted, never reworded (hard rule 6), and can't be edited.
 """
 
 import html
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,30 @@ from jhunt.workflows import application_pack
 
 e = html.escape
 SECTION_NAMES = {"cover_note": "Cover note sentence", "cv_line": "CV line"}
+# The claim validator's reasons (jhunt.platform.memory.claims), reworded for
+# the page. Anything else is shown as the validator wrote it.
+PLAIN = [
+    (r"cites no fact", "Cites no fact, so nothing supports it"),
+    (r"cites unknown fact '(.+)'", "Cites '{0}', which isn't in your fact bank"),
+    (r"fact '(.+)' is (\w+), not verified", "Cites '{0}', which you haven't verified ({1})"),
+    (r"mentions unverified skill '(.+)' \((\w+)\)", "Names a skill you haven't verified ({0})"),
+    (r"(?:spelled-out )?number '(.+)' is not in its cited facts",
+     "Says '{0}', but no cited fact has that number"),
+    (r"states \w+, above '(.+)' \((\w+)\): '(.+)' \(mentioned, not cited\)",
+     "Says '{2}' but the fact only supports '{1}' ({0}, named but not cited)"),
+    (r"states \w+, above '(.+)' \((\w+)\): '(.+)'",
+     "Says '{2}' but the fact only supports '{1}' ({0})"),
+]  # fmt: skip
+
+
+def plain_reason(problem: str) -> str:
+    for pattern, wording in PLAIN:
+        found = re.fullmatch(pattern, problem)
+        if found:
+            return wording.format(*found.groups())
+    return problem
+
+
 # Copy the cover note: the text area stays the fallback if this doesn't run.
 COPY_SCRIPT = """<script>
 document.getElementById("copy-note").addEventListener("click", function (event) {
@@ -161,7 +186,8 @@ def _line(c: Any, edit: Any, draft_id: int) -> str:
         f' <span class="badge badge-new">edited by you · v{edit.version}</span>' if edit else ""
     )
     warnings = "".join(
-        f'<p class="problem">Warning: {e(w)}</p>' for w in (edit.warnings if edit else ())
+        f'<p class="problem">Warning: {e(plain_reason(w))}</p>'
+        for w in (edit.warnings if edit else ())
     )
     return f"""<li id="{c.section}-{c.position}">
 <p><span class="tag">{SECTION_NAMES[c.section]}</span> {e(shown)}{marker}</p>
@@ -180,7 +206,7 @@ def _blocked(title: str, claims: list[Any]) -> str:
         return f"<h3>{title}</h3><p>None.</p>"
     items = "".join(
         f'<li><p><span class="tag tag-exclude">{SECTION_NAMES[c.section]}</span> {e(c.text)}</p>'
-        + "".join(f'<p class="problem">{e(p)}</p>' for p in c.problems)
+        + "".join(f'\n<p class="problem">{e(plain_reason(p))}</p>' for p in c.problems)
         + "</li>"
         for c in claims
     )
