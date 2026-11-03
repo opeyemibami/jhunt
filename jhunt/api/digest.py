@@ -84,6 +84,24 @@ def create_app(
         _start_capture(engine, registry, posting_id)
         return RedirectResponse(f"/#posting-{posting_id}", status_code=303)
 
+    @app.post("/postings/{posting_id}/hide")
+    def hide(posting_id: int, request: Request) -> RedirectResponse:
+        from_this_page(request)
+        if not scout.hide_posting(engine, posting_id):
+            raise HTTPException(404, "no such posting")
+        return RedirectResponse("/", status_code=303)
+
+    @app.get("/hidden", response_class=HTMLResponse)
+    def hidden() -> str:
+        return page("Hidden", _hidden(scout.hidden_postings(engine)), current="/")
+
+    @app.post("/hidden/{dedupe_key}/undo")
+    def undo_hide(dedupe_key: str, request: Request) -> RedirectResponse:
+        from_this_page(request)
+        if not scout.unhide(engine, dedupe_key):
+            raise HTTPException(404, "that posting isn't hidden")
+        return RedirectResponse("/hidden", status_code=303)
+
     @app.post("/scout/{mode}")
     def run_scout(mode: str, request: Request) -> RedirectResponse:
         from_this_page(request)
@@ -98,7 +116,7 @@ def create_app(
             problems["scout"] = str(exc)
         return RedirectResponse("/#scout", status_code=303)
 
-    applications.add_routes(app, engine, records)
+    applications.add_routes(app, engine, records, from_this_page)
     facts.add_routes(app, engine)
 
     @app.get("/runs/{run_id}")
@@ -143,6 +161,7 @@ def _start_capture(engine: Engine, registry: Registry, posting_id: int) -> None:
 
 def _load(engine: Engine) -> dict[str, Any]:
     with engine.connect() as conn:
+        hidden_by_you = scout.hidden_keys(conn)  # "Not interested", for good
         postings = conn.execute(
             text(
                 "SELECT p.id, p.dedupe_key, p.url, p.title, p.company, p.location,"
@@ -154,9 +173,10 @@ def _load(engine: Engine) -> dict[str, Any]:
                 " LEFT JOIN LATERAL (SELECT submitted_at, channel FROM submissions"
                 "  WHERE application_id = a.id ORDER BY submitted_at DESC, id DESC LIMIT 1) s"
                 " ON true"
-                " WHERE p.in_scope"
+                " WHERE p.in_scope AND NOT p.dedupe_key = ANY(:hidden)"
                 " ORDER BY p.fit_score DESC NULLS LAST, p.title, p.id"
-            )
+            ),
+            {"hidden": list(hidden_by_you)},
         ).all()
         hidden = conn.execute(text("SELECT count(*) FROM postings WHERE NOT in_scope")).scalar_one()
         # When the latest successful Scout run was queued: a posting first seen
@@ -183,6 +203,7 @@ def _load(engine: Engine) -> dict[str, Any]:
         "matched": [r for r in rows if "title" in (r[0].fit_matches or {})],
         "other": [r for r in rows if "title" not in (r[0].fit_matches or {})],
         "hidden": hidden,
+        "hidden_by_you": len(hidden_by_you),
     }
 
 
@@ -190,11 +211,14 @@ def _render(
     matched: list[Any],
     other: list[Any],
     hidden: int,
+    hidden_by_you: int,
     latest: scout.Today | None,
     shown: str,
     problem: str | None,
 ) -> str:
     out_of_scope = f"{hidden} out-of-scope posting{'' if hidden == 1 else 's'} hidden"
+    if hidden_by_you:
+        out_of_scope += f' · <a href="/hidden">{hidden_by_you} hidden by you</a>'
     active = (latest is not None and latest.status in live.ACTIVE) or any(
         run is not None and run.status in live.ACTIVE for _, run, _ in matched + other
     )
@@ -283,8 +307,37 @@ def _action(p: Any, run: Any) -> str:
         return (
             f'<form method="post" action="/postings/{p.id}/capture" class="inline">'
             '<button type="submit" class="primary">Capture</button></form>'
+            f'<form method="post" action="/postings/{p.id}/hide" class="inline">'
+            '<button type="submit">Not interested</button></form>'
         )
     if run.status == "failed":
         return f"Capture failed: {html.escape(run.error or '')}"
     # Queued or running: the live script updates it in place (ADR 0017).
     return live.status_element(run.id, run.status, run.status, label="Capture ")
+
+
+def _hidden(rows: list[Any]) -> str:
+    """The Hidden view: what the owner said they're not interested in, with Undo."""
+    e = html.escape
+    if not rows:
+        return '<h1>Hidden</h1><p>Nothing hidden. "Not interested" on the digest hides a job.</p>'
+    items = []
+    for r in rows:
+        where = " · ".join(e(x) for x in (r.detail.get("company"), r.location) if x)
+        gone = (
+            ""
+            if r.posting_id is not None
+            else '<span class="badge badge-gone">No longer stored</span>'
+        )
+        items.append(
+            f'<li class="card"><div class="card-main"><h3 class="card-title">'
+            f'{e(r.detail.get("title", ""))}{gone}</h3><p class="card-meta">{where}'
+            f' · hidden {r.at:%Y-%m-%d}</p></div><div class="card-side"><div class="card-actions">'
+            f'<form method="post" action="/hidden/{e(r.target)}/undo" class="inline">'
+            '<button type="submit">Undo</button></form></div></div></li>'
+        )
+    return (
+        f'<h1>Hidden</h1><p class="meta">{len(rows)} jobs you said you\'re not interested in.'
+        " Scout keeps them hidden when it sees them again.</p>"
+        f'<ol class="cards">{"".join(items)}</ol>'
+    )

@@ -14,6 +14,7 @@ from jhunt.workflows.scout.graph import (
     summary,
     thread_id_for,
 )
+from jhunt.workflows.scout.hidden import hidden_keys, hidden_postings, hide_posting, unhide
 from jhunt.workflows.scout.location import Scope, ScopeError, load_scope
 from jhunt.workflows.scout.parse import Posting, parse_board
 from jhunt.workflows.scout.postings import upsert_postings
@@ -47,6 +48,9 @@ __all__ = [
     "build",
     "fetch_board_tool",
     "fit_score",
+    "hidden_keys",
+    "hidden_postings",
+    "hide_posting",
     "latest_today",
     "load_scope",
     "load_sources",
@@ -58,6 +62,7 @@ __all__ = [
     "store_postings_tool",
     "summary",
     "thread_id_for",
+    "unhide",
     "upsert_postings",
     "utc_today",
 ]

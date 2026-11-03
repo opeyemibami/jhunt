@@ -2,8 +2,12 @@
 
 GET /applications       every application: company, role, stage, when it was
                         captured, its submissions and its latest draft.
+GET /applications/archived  the archived ones.
 GET /applications/<id>  one application: its stored job description, stage,
                         events, submissions (with their documents) and drafts.
+POST /applications/<id>/archive/<outcome>  sets the outcome (withdrawn or
+                        not_pursuing) and moves it out of the main list;
+POST /applications/<id>/restore  clears it again. Each appends an event.
 
 The job description is read from records directly (RecordStore.get), by
 exact generation with its sha256 checked: the read-only exception in ADR 0017.
@@ -12,23 +16,51 @@ says why and shows everything else. Every value is escaped.
 """
 
 import html
+import json
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import Engine, text
 
 from jhunt.api.page import page
 from jhunt.platform.artifacts import RecordIntegrityError, RecordStore
 
 e = html.escape
+# Why an application was archived: the outcome it's given, and how it's shown.
+OUTCOMES = {"withdrawn": "withdrawn", "not_pursuing": "not pursuing"}
 
 
-def add_routes(app: FastAPI, engine: Engine, records: RecordStore) -> None:
+def add_routes(
+    app: FastAPI, engine: Engine, records: RecordStore, from_this_page: Callable[[Request], None]
+) -> None:
     @app.get("/applications", response_class=HTMLResponse)
     def applications() -> str:
-        return page("Applications", _list(_applications(engine)), current="/applications")
+        rows = _applications(engine)
+        active = [r for r in rows if r.outcome is None]
+        archived = len(rows) - len(active)
+        return page("Applications", _list(active, archived), current="/applications")
+
+    @app.get("/applications/archived", response_class=HTMLResponse)
+    def archived() -> str:
+        rows = [r for r in _applications(engine) if r.outcome is not None]
+        return page("Archived", _list(rows, None), current="/applications")
+
+    @app.post("/applications/{application_id}/archive/{outcome}")
+    def archive(application_id: int, outcome: str, request: Request) -> RedirectResponse:
+        from_this_page(request)
+        if outcome not in OUTCOMES:
+            raise HTTPException(404, "no such outcome")
+        _set_outcome(engine, application_id, outcome)
+        return RedirectResponse(f"/applications/{application_id}", status_code=303)
+
+    @app.post("/applications/{application_id}/restore")
+    def restore(application_id: int, request: Request) -> RedirectResponse:
+        from_this_page(request)
+        _set_outcome(engine, application_id, None)
+        return RedirectResponse(f"/applications/{application_id}", status_code=303)
 
     @app.get("/applications/{application_id}", response_class=HTMLResponse)
     def application(application_id: int) -> str:
@@ -46,7 +78,7 @@ def _applications(engine: Engine) -> list[Any]:
         return list(
             conn.execute(
                 text(
-                    "SELECT a.id, a.company, a.role, a.stage, a.opened_at,"
+                    "SELECT a.id, a.company, a.role, a.stage, a.outcome, a.opened_at,"
                     " (SELECT count(*) FROM submissions s WHERE s.application_id = a.id)"
                     "   AS submissions,"
                     " (SELECT max(submitted_at) FROM submissions s"
@@ -68,9 +100,40 @@ def _applications(engine: Engine) -> list[Any]:
         )
 
 
-def _list(rows: list[Any]) -> str:
+def _set_outcome(engine: Engine, application_id: int, outcome: str | None) -> None:
+    """Archive (an outcome) or restore (none), with its event, in one transaction."""
+    with engine.begin() as conn:
+        changed = conn.execute(
+            text(
+                "UPDATE applications SET outcome = CAST(:o AS text),"
+                " closed_at = CASE WHEN CAST(:o AS text) IS NULL THEN NULL ELSE now() END"
+                " WHERE id = :a"
+            ),
+            {"o": outcome, "a": application_id},
+        ).rowcount
+        if not changed:
+            raise HTTPException(404, "no such application")
+        kind, payload = ("archived", {"outcome": outcome}) if outcome else ("restored", {})
+        conn.execute(
+            text(
+                "INSERT INTO events (application_id, type, payload, actor)"
+                " VALUES (:a, :t, CAST(:p AS jsonb), 'you')"
+            ),
+            {"a": application_id, "t": kind, "p": json.dumps(payload)},
+        )
+
+
+def _list(rows: list[Any], archived: int | None) -> str:
+    """The main list (archived: how many are archived) or the archived one (None)."""
+    title = "Applications" if archived is not None else "Archived applications"
+    more = f' · <a href="/applications/archived">{archived} archived</a>' if archived else ""
     if not rows:
-        return "<h1>Applications</h1><p>No applications yet. Capture a posting from the digest.</p>"
+        empty = (
+            "No applications yet. Capture a posting from the digest."
+            if archived is not None
+            else "Nothing archived."
+        )
+        return f'<h1>{title}</h1><p class="meta">{more.removeprefix(" · ")}</p><p>{empty}</p>'
     body = []
     for r in rows:
         submitted = (
@@ -86,11 +149,12 @@ def _list(rows: list[Any]) -> str:
         )
         body.append(
             f'<tr><td><a href="/applications/{r.id}">{e(r.company)}</a></td><td>{e(r.role)}</td>'
-            f'<td>{e(r.stage)}</td><td class="nowrap">{r.opened_at:%Y-%m-%d}</td>'
+            f"<td>{e(OUTCOMES.get(r.outcome or '', r.stage))}</td>"
+            f'<td class="nowrap">{r.opened_at:%Y-%m-%d}</td>'
             f"<td>{submitted}</td><td>{drafted}</td></tr>"
         )
     return (
-        f'<h1>Applications</h1><p class="meta">{len(rows)} applications</p>'
+        f'<h1>{title}</h1><p class="meta">{len(rows)} applications{more}</p>'
         "<table><tr><th>Company</th><th>Role</th><th>Stage</th><th>Captured</th>"
         "<th>Submissions</th><th>Latest draft</th></tr>" + "".join(body) + "</table>"
     )
@@ -100,7 +164,8 @@ def _application(engine: Engine, application_id: int) -> Any:
     with engine.connect() as conn:
         return conn.execute(
             text(
-                "SELECT a.id, a.company, a.role, a.stage, a.opened_at, s.url, s.text_uri,"
+                "SELECT a.id, a.company, a.role, a.stage, a.outcome, a.opened_at, s.url,"
+                " s.text_uri,"
                 " s.text_generation, s.text_sha256, s.captured_at"
                 " FROM applications a JOIN jd_snapshots s ON s.id = a.snapshot_id"
                 " WHERE a.id = :id"
@@ -193,6 +258,7 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> str:
     return f"""
 <h1>{e(a.company)}, {e(a.role)}</h1>
 <p class="meta">Stage: {e(a.stage)} · captured {a.captured_at:%Y-%m-%d %H:%M} UTC · {link}</p>
+{_archive_panel(a)}
 <h2>Job description</h2>
 {shown}
 <h2>Events</h2>
@@ -201,3 +267,21 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> str:
 <ul class="plain">{"".join(submission_items) or "<li>None yet</li>"}</ul>
 <h2>Drafts</h2>
 <ul class="plain">{draft_items or "<li>None yet</li>"}</ul>"""
+
+
+def _archive_panel(a: Any) -> str:
+    """Archive with an outcome, or, once archived, the outcome and Restore."""
+
+    def button(path: str, label: str) -> str:
+        return (
+            f'<form method="post" action="/applications/{a.id}/{path}" class="inline">'
+            f'<button type="submit">{label}</button></form>'
+        )
+
+    if a.outcome is not None:
+        shown = OUTCOMES.get(a.outcome, a.outcome)
+        return f'<p class="meta">Outcome: {e(shown)} · {button("restore", "Restore")}</p>'
+    archive = " ".join(
+        button(f"archive/{key}", f"Archive: {label}") for key, label in OUTCOMES.items()
+    )
+    return f'<p class="meta">{archive}</p>'
