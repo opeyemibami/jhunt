@@ -24,7 +24,6 @@ from sqlalchemy import Engine, create_engine, text
 from jhunt.app.registry import build_registry
 from jhunt.platform.config import get_settings
 from jhunt.platform.runtime.registry import Registry
-from jhunt.platform.runtime.threads import ThreadExists, enqueue_start
 from jhunt.workflows import scout
 
 WAIT_SECONDS = 300
@@ -46,82 +45,51 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    try:
-        sources = scout.load_sources(settings.jhunt_config_dir)
-        scope = scout.load_scope(settings.jhunt_config_dir)
-        targets = scout.load_targets(settings.jhunt_config_dir)
+    try:  # the Scout config first: a bad file stops it before anything else
+        scout.load_sources(settings.jhunt_config_dir)
+        scout.load_scope(settings.jhunt_config_dir)
+        scout.load_targets(settings.jhunt_config_dir)
     except (scout.SourcesError, scout.ScopeError, scout.TargetsError) as exc:
         raise SystemExit(f"jhunt-scout: {exc}") from None
-
     engine = create_engine(settings.database_url())
     registry = build_registry(settings, engine)
     day = today()
-    latest = _latest_today(engine, day)
-    if args.retry:
-        if latest is None:
-            print("nothing to retry: no Scout run today; run jhunt-scout")
-            return
-        thread_id, attempt, status = latest
-        if status != "failed":
-            state = "succeeded" if status == "succeeded" else f"is {status}"
-            print(f"not retrying: today's run {state} (thread {thread_id})")
-            return
-        thread_id = scout.thread_id_for(day, attempt + 1)
-    elif args.rescore:
-        if latest is None:
-            print("nothing to rescore: no Scout run today; run jhunt-scout")
-            return
-        thread_id, attempt, status = latest
-        if status != "succeeded":
-            state = "failed" if status == "failed" else f"is {status}"
-            hint = "; use --retry" if status == "failed" else ""
-            print(f"not rescoring: today's run {state} (thread {thread_id}){hint}")
-            return
-        thread_id = scout.thread_id_for(day, attempt + 1)
-    elif latest is not None:
-        thread_id, _, status = latest
-        if status == "failed":
-            print(f"today's run failed: thread {thread_id}; jhunt-scout --retry starts another")
-        else:
-            print(f"already ran today: thread {thread_id} ({status}); Scout runs once a day")
-        return
-    else:
-        thread_id = scout.thread_id_for(day)
+    mode: scout.Mode = "retry" if args.retry else "rescore" if args.rescore else "run"
     try:
-        enqueue_start(
-            engine,
-            registry,
-            thread_id,
-            scout.WORKFLOW,
-            scout.scout_input(day, sources, scope, targets),
+        thread_id, boards = scout.start_scout(
+            engine, registry, settings.jhunt_config_dir, day, mode
         )
-    except ThreadExists:  # another jhunt-scout queued it just now
-        print(f"already queued: thread {thread_id}")
+    except (scout.SourcesError, scout.ScopeError, scout.TargetsError) as exc:
+        raise SystemExit(f"jhunt-scout: {exc}") from None
+    except scout.ScoutRefused as refused:
+        print(_refusal(refused, mode))
         return
-    print(f"queued: thread {thread_id} ({len(sources)} boards)")
+    print(f"queued: thread {thread_id} ({boards} boards)")
     if args.wait:
         conninfo = settings.database_url().set(drivername="postgresql")
         _wait(engine, conninfo.render_as_string(hide_password=False), registry, thread_id)
 
 
-def _latest_today(engine: Engine, day: str) -> tuple[str, int, str] | None:
-    """Today's latest Scout thread, its attempt number and its run's status."""
-    first = scout.thread_id_for(day)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT thread_id, status FROM runs"
-                " WHERE workflow = :w AND (thread_id = :first OR thread_id LIKE :retries)"
-                " ORDER BY id"
-            ),
-            {"w": scout.WORKFLOW, "first": first, "retries": f"{first}-%"},
-        ).all()
-    latest = None
-    for thread_id, status in rows:
-        attempt = 1 if thread_id == first else int(thread_id.removeprefix(f"{first}-"))
-        if latest is None or attempt >= latest[1]:
-            latest = (thread_id, attempt, status)
-    return latest
+def _refusal(refused: scout.ScoutRefused, mode: scout.Mode) -> str:
+    """The command's wording for each refusal (the digest has its own)."""
+    latest = refused.latest
+    if refused.reason == "none_today":
+        return f"nothing to {mode}: no Scout run today; run jhunt-scout"
+    assert latest is not None
+    if refused.reason == "already":
+        if latest.status == "failed":
+            return (
+                f"today's run failed: thread {latest.thread_id}; jhunt-scout --retry starts another"
+            )
+        return (
+            f"already ran today: thread {latest.thread_id} ({latest.status}); Scout runs once a day"
+        )
+    if refused.reason == "not_failed":
+        state = "succeeded" if latest.status == "succeeded" else f"is {latest.status}"
+        return f"not retrying: today's run {state} (thread {latest.thread_id})"
+    state = "failed" if latest.status == "failed" else f"is {latest.status}"
+    hint = "; use --retry" if latest.status == "failed" else ""
+    return f"not rescoring: today's run {state} (thread {latest.thread_id}){hint}"
 
 
 def _wait(engine: Engine, conninfo: str, registry: Registry, thread_id: str) -> None:

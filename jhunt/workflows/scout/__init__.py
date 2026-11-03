@@ -18,6 +18,15 @@ from jhunt.workflows.scout.location import Scope, ScopeError, load_scope
 from jhunt.workflows.scout.parse import Posting, parse_board
 from jhunt.workflows.scout.postings import upsert_postings
 from jhunt.workflows.scout.sources import Source, SourcesError, load_sources
+from jhunt.workflows.scout.start import (
+    Mode,
+    ScoutRefused,
+    Today,
+    latest_today,
+    run_summary,
+    start_scout,
+    utc_today,
+)
 from jhunt.workflows.scout.store import store_postings_tool
 
 __all__ = [
@@ -25,23 +34,30 @@ __all__ = [
     "VERSIONS",
     "WORKFLOW",
     "BoardFetchFailed",
+    "Mode",
     "Posting",
     "Scope",
     "ScopeError",
+    "ScoutRefused",
     "Source",
     "SourcesError",
     "Targets",
     "TargetsError",
+    "Today",
     "build",
     "fetch_board_tool",
     "fit_score",
+    "latest_today",
     "load_scope",
     "load_sources",
     "load_targets",
     "parse_board",
+    "run_summary",
     "scout_input",
+    "start_scout",
     "store_postings_tool",
     "summary",
     "thread_id_for",
     "upsert_postings",
+    "utc_today",
 ]
