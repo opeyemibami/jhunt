@@ -19,5 +19,12 @@ HOST = "127.0.0.1"
 def main() -> None:
     settings = get_settings()
     engine = create_engine(settings.database_url(), pool_pre_ping=True)
-    app = create_app(engine, build_registry(settings, engine), port=settings.jhunt_api_port)
+    conninfo = settings.database_url().set(drivername="postgresql")
+    app = create_app(
+        engine,
+        build_registry(settings, engine),
+        port=settings.jhunt_api_port,
+        config_dir=settings.jhunt_config_dir,
+        conninfo=conninfo.render_as_string(hide_password=False),
+    )
     uvicorn.run(app, host=HOST, port=settings.jhunt_api_port)

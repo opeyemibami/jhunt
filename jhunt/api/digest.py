@@ -6,37 +6,57 @@ GET /  in-scope postings with a title match, by fit score, with what matched;
        posting shows its application and its latest submission (ADR 0013).
 POST /postings/<id>/capture  queues a Capture run for that posting, read from
        its board's API, and returns to the page. A running jhunt-worker does it.
+POST /scout/run, /scout/retry, /scout/rescore  queue today's Scout run under
+       the same rules as jhunt-scout (ADR 0011, ADR 0017).
+GET /runs/<id>  a run's status as JSON, for the live status script (live.py).
 
 There is no login yet, so the server listens on 127.0.0.1 only (jhunt.app.web)
 and checks two headers. Host must name this machine and port, so a website
 whose DNS name points at 127.0.0.1 can't read the page (DNS rebinding).
-Origin must be this page on a capture, so another site open in the browser
-can't post one. Board text is data: every value is escaped.
+Origin must be this page on every form post, so another site open in the
+browser can't post one. Board text is data: every value is escaped.
 """
 
 import contextlib
 import html
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import Engine, text
 
+from jhunt.api import live
 from jhunt.jobs.boards import board_job_url
 from jhunt.platform.runtime.registry import Registry
 from jhunt.platform.runtime.threads import ThreadExists, enqueue_start
-from jhunt.workflows import capture
+from jhunt.workflows import capture, scout
 
 # The order matches are shown in. jsonb doesn't keep the order they were written in.
 _MATCH_SECTIONS = ("title", "include", "penalty", "exclude")
 
 
-def create_app(engine: Engine, registry: Registry, *, port: int) -> FastAPI:
+def create_app(
+    engine: Engine,
+    registry: Registry,
+    *,
+    port: int,
+    config_dir: Path,
+    conninfo: str,
+    today: Callable[[], str] = scout.utc_today,
+) -> FastAPI:
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     origins = {f"http://{host}" for host in hosts}
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    # The last reason Run Scout now couldn't start (a bad config file), shown
+    # on the panel until the next try.
+    problems: dict[str, str] = {}
+
+    def from_this_page(request: Request) -> None:
+        if request.headers.get("origin") not in origins:
+            raise HTTPException(403, "only from the digest page")
 
     @app.middleware("http")
     async def only_this_host(
@@ -48,14 +68,39 @@ def create_app(engine: Engine, registry: Registry, *, port: int) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def digest() -> str:
-        return _render(**_load(engine))
+        latest = scout.latest_today(engine, today())
+        found = (
+            None if latest is None else live.run_status(engine, conninfo, registry, latest.run_id)
+        )
+        shown = "" if found is None else found["text"]
+        return _render(**_load(engine), latest=latest, shown=shown, problem=problems.get("scout"))
 
     @app.post("/postings/{posting_id}/capture")
     def capture_posting(posting_id: int, request: Request) -> RedirectResponse:
-        if request.headers.get("origin") not in origins:
-            raise HTTPException(403, "capture only from the digest page")
+        from_this_page(request)
         _start_capture(engine, registry, posting_id)
         return RedirectResponse(f"/#posting-{posting_id}", status_code=303)
+
+    @app.post("/scout/{mode}")
+    def run_scout(mode: str, request: Request) -> RedirectResponse:
+        from_this_page(request)
+        if mode not in ("run", "retry", "rescore"):
+            raise HTTPException(404, "no such Scout action")
+        problems.pop("scout", None)
+        try:
+            scout.start_scout(engine, registry, config_dir, today(), mode)  # type: ignore[arg-type]
+        except scout.ScoutRefused:
+            pass  # the panel shows today's run, which is why
+        except (scout.SourcesError, scout.ScopeError, scout.TargetsError) as exc:
+            problems["scout"] = str(exc)
+        return RedirectResponse("/#scout", status_code=303)
+
+    @app.get("/runs/{run_id}")
+    def run_status(run_id: int) -> JSONResponse:
+        found = live.run_status(engine, conninfo, registry, run_id)
+        if found is None:
+            raise HTTPException(404, "no such run")
+        return JSONResponse(found)
 
     return app
 
@@ -113,51 +158,76 @@ def _load(engine: Engine) -> dict[str, Any]:
             r.thread_id: r
             for r in conn.execute(
                 text(
-                    "SELECT DISTINCT ON (thread_id) thread_id, status, error FROM runs"
+                    "SELECT DISTINCT ON (thread_id) id, thread_id, status, error FROM runs"
                     " WHERE thread_id = ANY(:threads) ORDER BY thread_id, id DESC"
                 ),
                 {"threads": threads},
             )
         }
-        scout = conn.execute(
-            text(
-                "SELECT thread_id, status, created_at FROM runs WHERE workflow = 'scout'"
-                " ORDER BY id DESC LIMIT 1"
-            )
-        ).first()
     rows = [(p, captures.get(t)) for p, t in zip(postings, threads, strict=True)]
     return {
         "matched": [r for r in rows if "title" in (r[0].fit_matches or {})],
         "other": [r for r in rows if "title" not in (r[0].fit_matches or {})],
         "hidden": hidden,
-        "scout": scout,
     }
 
 
-def _render(matched: list[Any], other: list[Any], hidden: int, scout: Any) -> str:
-    e = html.escape
-    last = (
-        f"Last Scout run: {e(scout.thread_id)}, {e(scout.status)},"
-        f" {scout.created_at:%Y-%m-%d %H:%M} UTC"
-        if scout is not None
-        else "Scout hasn't run yet"
-    )
+def _render(
+    matched: list[Any],
+    other: list[Any],
+    hidden: int,
+    latest: scout.Today | None,
+    shown: str,
+    problem: str | None,
+) -> str:
     out_of_scope = f"{hidden} out-of-scope posting{'' if hidden == 1 else 's'} hidden"
+    active = (latest is not None and latest.status in live.ACTIVE) or any(
+        run is not None and run.status in live.ACTIVE for _, run in matched + other
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scout digest</title>
+{live.NOSCRIPT_REFRESH if active else ""}
 <style>{_CSS}</style></head>
 <body><main>
 <h1>Scout digest</h1>
 <p class="meta">{len(matched)} title matches · {len(other)} other in scope · {out_of_scope}</p>
-<p class="meta">{last}</p>
+{_scout_panel(latest, shown, problem)}
 <ol class="postings">{"".join(_row(p, run) for p, run in matched)}</ol>
 <details><summary>Other in-scope jobs ({len(other)})</summary>
 <ol class="postings">{"".join(_row(p, run) for p, run in other)}</ol>
 </details>
-</main></body></html>
+</main>
+{live.SCRIPT}
+</body></html>
 """
+
+
+def _scout_panel(latest: scout.Today | None, shown: str, problem: str | None) -> str:
+    """Today's Scout run, live, and the one action its state allows (ADR 0011):
+    Run Scout now with no run today, Retry after a failure, Rescore after a
+    success, nothing while it's queued or running."""
+
+    def button(mode: str, label: str) -> str:
+        return (
+            f'<form method="post" action="/scout/{mode}" class="inline">'
+            f'<button type="submit">{label}</button></form>'
+        )
+
+    lines = []
+    if problem:
+        lines.append(f'<p class="problem">Scout couldn\'t start: {html.escape(problem)}</p>')
+    if latest is None:
+        lines.append(f"<p>No Scout run today. {button('run', 'Run Scout now')}</p>")
+    else:
+        state = live.status_element(latest.run_id, latest.status, shown)
+        action = {"failed": button("retry", "Retry"), "succeeded": button("rescore", "Rescore")}
+        lines.append(
+            f"<p>Today's run ({html.escape(latest.thread_id)}): {state}"
+            f" {action.get(latest.status, '')}</p>"
+        )
+    return f'<section id="scout" class="scout"><h2>Scout</h2>{"".join(lines)}</section>'
 
 
 def _row(p: Any, run: Any) -> str:
@@ -198,7 +268,8 @@ def _action(p: Any, run: Any) -> str:
         )
     if run.status == "failed":
         return f"Capture failed: {html.escape(run.error or '')}"
-    return f"Capture {html.escape(run.status)}"
+    # Queued or running: the live script updates it in place (ADR 0017).
+    return live.status_element(run.id, run.status, run.status, label="Capture ")
 
 
 _CSS = """
@@ -223,5 +294,11 @@ li .meta, .matched, .action { margin-left: 3.2rem; }
 .action { margin-top: .3rem; font-size: .9rem; color: var(--muted); }
 button { font: inherit; padding: .2rem .8rem; cursor: pointer; }
 details { margin-top: 1.5rem; }
+section.scout { border: 1px solid var(--line); border-radius: 6px; padding: .2rem 1rem;
+  margin: 1rem 0; }
+section.scout h2 { font-size: 1rem; margin: .6rem 0 .2rem; }
+.live { white-space: pre-line; }
+.problem { color: #b42318; }
+form.inline { display: inline; }
 summary { cursor: pointer; font-weight: 600; }
 """

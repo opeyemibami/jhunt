@@ -4,6 +4,7 @@ Capture button per posting that queues a Capture run from the board API."""
 
 import re
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,6 +22,14 @@ from jhunt.workflows.scout.postings import upsert_postings
 from jhunt.workflows.workspace.submission import SubmittedFile, record_submission
 
 PORT = 8765
+REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
+
+
+def app_for(engine: Engine, registry: Registry):  # type: ignore[no-untyped-def]
+    conninfo = engine.url.set(drivername="postgresql").render_as_string(hide_password=False)
+    return create_app(engine, registry, port=PORT, config_dir=REPO_CONFIG, conninfo=conninfo)
+
+
 ORIGIN = f"http://127.0.0.1:{PORT}"
 
 
@@ -37,7 +46,7 @@ def client(engine: Engine) -> Iterator[TestClient]:
     registry.register(
         capture.WORKFLOW, capture.VERSION, capture.build(engine, ToolGateway(engine, []))
     )
-    with TestClient(create_app(engine, registry, port=PORT), base_url=ORIGIN) as c:
+    with TestClient(app_for(engine, registry), base_url=ORIGIN) as c:
         yield c
 
 
@@ -222,7 +231,8 @@ def test_a_captured_posting_links_its_application_instead_of_a_button(
     )
     html = page(client)
     assert f"Captured: application {application_id}" in html
-    assert "<button" not in html
+    row = html[html.index('id="posting-') :]  # the posting, not the Scout panel
+    assert "<button" not in row
 
 
 def test_a_submitted_application_shows_its_latest_submission(
@@ -279,13 +289,9 @@ def test_capture_from_another_origin_is_refused(
 def test_another_host_name_is_refused(engine: Engine) -> None:
     # A DNS name pointed at 127.0.0.1 (DNS rebinding) must not read the page.
     registry = Registry()
-    with TestClient(
-        create_app(engine, registry, port=PORT), base_url=f"http://evil.example:{PORT}"
-    ) as c:
+    with TestClient(app_for(engine, registry), base_url=f"http://evil.example:{PORT}") as c:
         assert c.get("/").status_code == 400
-    with TestClient(
-        create_app(engine, registry, port=PORT), base_url=f"http://localhost:{PORT}"
-    ) as c:
+    with TestClient(app_for(engine, registry), base_url=f"http://localhost:{PORT}") as c:
         assert c.get("/").status_code == 200
 
 
