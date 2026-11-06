@@ -26,6 +26,8 @@ from jhunt.workflows.workspace.submission import (
 
 TABLES = [
     "labels",
+    "pack_requirements",
+    "pack_requirement_checks",
     "draft_edits",
     "draft_claims",
     "pack_drafts",
@@ -52,8 +54,8 @@ def engine(migrated_db_url: URL) -> Iterator[Engine]:
 
 
 # Per seeded application: Capture's rows, plus one submission (its event and
-# its upload's tool call are the second of each).
-EACH = dict.fromkeys(TABLES, 1) | {"events": 2, "tool_calls": 2}
+# its upload's tool call are the second of each), plus a failed v2 pack thread.
+EACH = dict.fromkeys(TABLES, 1) | {"events": 2, "tool_calls": 2, "threads": 2}
 
 
 def submission_thread(application_id: int) -> str:
@@ -137,6 +139,30 @@ def seed(engine: Engine, n: int) -> int:
             ),
             {"k": f"sub-key-{n}", "t": sub_thread, "r": json.dumps(cv_ref)},
         )
+        # A v2 thread that stored its requirements, then failed before drafting
+        # (ADR 0019): found by its threads row.
+        failed = f"pack-{application_id}-2"
+        conn.execute(
+            text(
+                "INSERT INTO threads (thread_id, workflow, version)"
+                " VALUES (:t, 'application_pack', 2)"
+            ),
+            {"t": failed},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO pack_requirement_checks (thread_id, dropped, provider, model)"
+                " VALUES (:t, 1, 'anthropic', 'claude-sonnet-5-5')"
+            ),
+            {"t": failed},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO pack_requirements (thread_id, position, text, quote, kind, match,"
+                " fact_ids, why) VALUES (:t, 0, 'CUDA', 'CUDA', 'must', 'gap', '{}', 'None.')"
+            ),
+            {"t": failed},
+        )
         # A pack draft with one claim (ADR 0016).
         draft_id = conn.execute(
             text(
@@ -193,6 +219,7 @@ def test_plan_names_everything_it_will_remove(engine: Engine) -> None:
         capture.thread_id_for("1" * 64),
         submission_thread(target),
         pack_thread(target),
+        f"pack-{target}-2",  # no draft: found by its threads row
     ]
     assert plan.rows == EACH
     assert cmd.plan(engine, 9999) is None
@@ -227,6 +254,8 @@ def test_triggers_are_back_on_after_the_delete(engine: Engine) -> None:
         conn.execute(text("DELETE FROM applications WHERE id = :a"), {"a": other})
     for table in (
         "labels",
+        "pack_requirements",
+        "pack_requirement_checks",
         "draft_edits",
         "draft_claims",
         "pack_drafts",

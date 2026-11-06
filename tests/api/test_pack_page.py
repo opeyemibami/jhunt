@@ -62,8 +62,8 @@ def engine(migrated_db_url: URL, tmp_path: Path) -> Iterator[Engine]:
 @pytest.fixture
 def client(engine: Engine) -> Iterator[TestClient]:
     registry = Registry()
-    registry.register(application_pack.WORKFLOW, application_pack.VERSION,
-                      application_pack.build(ToolGateway(engine, [])))  # fmt: skip
+    for version, build in application_pack.VERSIONS.items():
+        registry.register(application_pack.WORKFLOW, version, build(ToolGateway(engine, [])))
     conninfo = engine.url.set(drivername="postgresql").render_as_string(hide_password=False)
     app = create_app(engine, registry, port=PORT, config_dir=REPO_CONFIG, conninfo=conninfo,
                      records=RecordStore("unused"))  # fmt: skip
