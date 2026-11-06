@@ -26,6 +26,7 @@ from jhunt.platform.memory.claims import load_claim_levels
 from jhunt.platform.runtime.registry import Registry
 from jhunt.platform.runtime.threads import ThreadExists
 from jhunt.workflows import application_pack
+from jhunt.workflows.application_pack import requirements as reqs
 
 e = html.escape
 SECTION_NAMES = {"cover_note": "Cover note sentence", "cv_line": "CV line"}
@@ -90,7 +91,7 @@ def add_routes(
         head, claims = found
         edits = application_pack.latest_edits(engine, draft_id)
         config = application_pack.load_pack_config(config_dir)
-        body = _render(head, claims, edits, config)
+        body = _render(head, claims, edits, config, requirements_section(engine, head.thread_id))
         return page(f"Draft {draft_id}", body, current="/applications")
 
     @app.post("/drafts/{draft_id}/edit")
@@ -119,7 +120,8 @@ def _draft(engine: Engine, draft_id: int) -> tuple[Any, list[Any]] | None:
     with engine.connect() as conn:
         head = conn.execute(
             text(
-                "SELECT d.id, d.application_id, d.model, d.created_at, a.company, a.role"
+                "SELECT d.id, d.application_id, d.thread_id, d.model, d.created_at,"
+                " a.company, a.role"
                 " FROM pack_drafts d JOIN applications a ON a.id = d.application_id"
                 " WHERE d.id = :d"
             ),
@@ -137,7 +139,45 @@ def _draft(engine: Engine, draft_id: int) -> tuple[Any, list[Any]] | None:
     return head, list(claims)
 
 
-def _render(head: Any, claims: list[Any], edits: dict[Any, Any], config: Any) -> str:
+def requirements_section(engine: Engine, thread_id: str) -> str:
+    """The job's requirements, matched to the facts (ADR 0019): gaps first,
+    then partial, then met. A v1 draft had no check."""
+    with engine.connect() as conn:
+        checked = reqs.load_requirements(conn, thread_id)
+    if checked is None:
+        return '<p class="meta">No requirements check (drafted before v2)</p>'
+    dropped = (
+        f" · {checked.dropped} dropped: their quote wasn't in the job" if checked.dropped else ""
+    )
+    groups = []
+    for match in reqs.MATCHES:
+        found = [r for r in checked.requirements if r.match == match]
+        items = "".join(
+            f'<li><p><span class="tag{" tag-exclude" if r.kind == "must" else ""}">{r.kind}'
+            f"</span> {e(r.text)}</p>"
+            + (f'<p class="meta">Facts: {e(", ".join(r.fact_ids))}</p>' if r.fact_ids else "")
+            + f'<p class="meta">{e(r.why)}</p></li>'
+            for r in found
+        )
+        title = {"gap": "Gaps", "partial": "Partial", "met": "Met"}[match]
+        groups.append(f'<h3>{title} ({len(found)})</h3><ul class="plain">{items}</ul>')
+    return (
+        f'<section class="requirements"><h2>Requirements</h2>'
+        f'<p class="meta">{e(reqs.summary(checked.requirements) + dropped)}</p>'
+        f"{''.join(groups)}</section>"
+    )
+
+
+def requirements_summary(engine: Engine, thread_id: str) -> str:
+    """One line for the application page's Drafts list."""
+    with engine.connect() as conn:
+        checked = reqs.load_requirements(conn, thread_id)
+    return "No requirements check" if checked is None else reqs.summary(checked.requirements)
+
+
+def _render(
+    head: Any, claims: list[Any], edits: dict[Any, Any], config: Any, requirements: str
+) -> str:
     used = max((c.round for c in claims), default=0)
     final = [c for c in claims if c.round == used]
     accepted = [c for c in final if not c.blocked]
@@ -163,6 +203,7 @@ def _render(head: Any, claims: list[Any], edits: dict[Any, Any], config: Any) ->
 <h1>Draft {head.id}: {e(head.company)}, {e(head.role)}</h1>
 <p class="meta">{e(head.model)} · {head.created_at:%Y-%m-%d %H:%M} UTC{repaired}
  · <a href="/applications/{head.application_id}">back to the application</a></p>
+{requirements}
 <div class="side-by-side">
 <section class="accepted"><h2>Accepted</h2>
 <h3>Cover note</h3>

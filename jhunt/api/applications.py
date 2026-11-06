@@ -26,7 +26,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import Engine, text
 
-from jhunt.api import live
+from jhunt.api import live, pack
 from jhunt.api.page import page
 from jhunt.platform.artifacts import RecordIntegrityError, RecordStore
 
@@ -228,7 +228,7 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> tuple
         ).first()
         drafts = conn.execute(
             text(
-                "SELECT p.id, p.model, p.created_at, max(c.round) AS rounds,"
+                "SELECT p.id, p.thread_id, p.model, p.created_at, max(c.round) AS rounds,"
                 " count(*) FILTER (WHERE NOT c.blocked AND c.round = r.used) AS accepted,"
                 " count(*) FILTER (WHERE c.blocked AND c.round = r.used) AS blocked"
                 " FROM pack_drafts p JOIN draft_claims c ON c.draft_id = p.id"
@@ -269,8 +269,11 @@ def _detail(engine: Engine, a: Any, job: tuple[str | None, str | None]) -> tuple
         f'<li><a href="/drafts/{d.id}">Draft {d.id}</a> · {d.created_at:%Y-%m-%d %H:%M}'
         f" · {e(d.model)} ·"
         f" {d.accepted} accepted, {d.blocked} blocked"
-        f"{' · repaired' if d.rounds else ''}</li>"
-        for d in drafts
+        f"{' · repaired' if d.rounds else ''}"
+        # The latest draft's requirements match, in one line (ADR 0019).
+        + (f" · {e(pack.requirements_summary(engine, d.thread_id))}" if n == 0 else "")
+        + "</li>"
+        for n, d in enumerate(drafts)
     )
     return (
         f"""
