@@ -253,3 +253,44 @@ def test_reasons_in_plain_words(problem: str, plain: str) -> None:
     from jhunt.api.pack import plain_reason
 
     assert plain_reason(problem) == plain
+
+
+def with_requirements(engine: Engine, thread: str) -> None:
+    """The requirements check a v2 thread stores before its draft."""
+    from jhunt.workflows.application_pack import requirements as reqs
+
+    found = reqs.CheckedRequirements((
+        reqs.Requirement("GPU kernels", "CUDA kernels", "must", "gap", (), "No kernel work."),
+        reqs.Requirement("Inference", "inference", "must", "met", ("role-acme",), "Cut cost 35%."),
+        reqs.Requirement("Python", "Python", "nice", "partial", ("role-acme",), "Implied <only>."),
+    ), dropped=2)  # fmt: skip
+    record = CallRecord("anthropic", "claude-sonnet-5-5", "pack.requirements", 1, 0, 0, 1, 1, None)
+    reqs.store_requirements(engine, found, thread_id=thread, record=record)
+
+
+def test_a_v2_draft_shows_its_requirements_gaps_first(engine: Engine, client: TestClient) -> None:
+    app_id = application(engine)
+    with_requirements(engine, "pack-x-2")
+    draft_id = drafted(engine, app_id, thread="pack-x-2")
+    page = client.get(f"/drafts/{draft_id}").text
+    section = page[
+        page.index('<section class="requirements"') : page.index('<div class="side-by-side">')
+    ]
+    assert "must: 1 met, 0 partial, 1 gap · nice: 0 met, 1 partial, 0 gaps" in section
+    assert "2 dropped: their quote wasn&#x27;t in the job" in section
+    # Gaps first, then partial, then met; each with must or nice, its facts and why.
+    assert section.index("GPU kernels") < section.index("Python") < section.index("Inference")
+    assert re.search(r'<span class="tag[^"]*">must</span> GPU kernels', section)
+    assert "Facts: role-acme" in section and "Implied &lt;only&gt;." in section
+    assert '<p class="meta">No kernel work.</p>' in section
+
+    listing = client.get(f"/applications/{app_id}").text
+    assert "must: 1 met, 0 partial, 1 gap" in listing
+
+
+def test_a_v1_draft_says_it_had_no_requirements_check(engine: Engine, client: TestClient) -> None:
+    app_id = application(engine)
+    draft_id = drafted(engine, app_id)
+    page = client.get(f"/drafts/{draft_id}").text
+    assert "No requirements check (drafted before v2)" in page
+    assert "No requirements check" in client.get(f"/applications/{app_id}").text
