@@ -241,6 +241,7 @@ def test_seeded_levels(engine: Engine) -> None:
         "snapshot_job_description": 1,
         "record_submission": 1,  # migration 0009 (ADR 0013), approved by the owner
         "draft_application_pack": 0,  # migration 0013 (ADR 0016), approved by the owner
+        "extract_requirements": 0,  # migration 0019 (ADR 0019), approved by the owner
     }
 
 

@@ -37,6 +37,8 @@ from jhunt.workflows import capture
 # The triggers that refuse deletes, by table (migrations 0005, 0006, 0009, 0012).
 _GUARDS = {
     "labels": "labels_append_only",
+    "pack_requirements": "pack_requirements_append_only",
+    "pack_requirement_checks": "pack_requirement_checks_append_only",
     "draft_edits": "draft_edits_append_only",
     "draft_claims": "draft_claims_append_only",
     "pack_drafts": "pack_drafts_append_only",
@@ -71,6 +73,9 @@ _SCOPE = [
         " OR target LIKE ANY (SELECT 'draft:' || id || ':%' FROM pack_drafts"
         "  WHERE application_id = :application_id)",
     ),
+    # Each pack thread's requirements check (ADR 0019), drafted or not.
+    ("pack_requirements", "thread_id = ANY(:threads)"),
+    ("pack_requirement_checks", "thread_id = ANY(:threads)"),
     (
         "draft_edits",
         "draft_id IN (SELECT id FROM pack_drafts WHERE application_id = :application_id)",
@@ -123,10 +128,15 @@ def plan(engine: Engine, application_id: int) -> Plan | None:
             ),
             {"pattern": f"submission-{application_id}-%"},
         ).scalars()
-        # Each draft's Application pack thread (ADR 0016).
+        # Each Application pack thread (ADR 0016), including one that failed
+        # before it stored a draft: a v2 thread may have its requirements.
         threads += conn.execute(
-            text("SELECT thread_id FROM pack_drafts WHERE application_id = :a ORDER BY id"),
-            {"a": application_id},
+            text(
+                "SELECT thread_id FROM pack_drafts WHERE application_id = :a"
+                " UNION SELECT thread_id FROM threads WHERE thread_id LIKE :pattern"
+                " ORDER BY thread_id"
+            ),
+            {"a": application_id, "pattern": f"pack-{application_id}-%"},
         ).scalars()
         bucket, prefix = _snapshot_folder(found.html_uri)
         prefixes = [prefix]

@@ -11,3 +11,5 @@ default = "anthropic:claude-haiku-5-5"
 "pack.draft" = "anthropic:claude-sonnet-5-5"
 # Its one repair round, when claims were blocked (ADR 0016).
 "pack.repair" = "anthropic:claude-sonnet-5-5"
+# The requirements match before each v2 draft (ADR 0019).
+"pack.requirements" = "anthropic:claude-sonnet-5-5"

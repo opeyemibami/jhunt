@@ -27,13 +27,15 @@ def build_registry(settings: Settings, engine: Engine) -> Registry:
         raise SystemExit("set GCS_STAGING_BUCKET: Scout keeps board lists there (ADR 0010)")
     store = RecordStore(settings.gcs_records_bucket)
     staging = StagingStore(settings.gcs_staging_bucket)
+    models = _lazy_models(settings)  # one model gateway, built on the first call
     http = httpx.Client(timeout=httpx.Timeout(20.0), headers={"User-Agent": USER_AGENT})
     tools = [
         capture.snapshot_posting_tool(store, http),
         scout.fetch_board_tool(staging, http),
         scout.store_postings_tool(engine, staging),
+        application_pack.extract_requirements_tool(engine, store, models),
         application_pack.draft_pack_tool(
-            engine, store, _lazy_models(settings), load_claim_levels(settings.jhunt_config_dir)
+            engine, store, models, load_claim_levels(settings.jhunt_config_dir)
         ),
         workspace.store_submission_file_tool(store, staging=staging),
         workspace.delete_staged_submission_file_tool(staging),
@@ -44,9 +46,8 @@ def build_registry(settings: Settings, engine: Engine) -> Registry:
     registry.register(capture.WORKFLOW, capture.VERSION, capture.build(engine, gateway))
     for version in scout.VERSIONS:
         registry.register(scout.WORKFLOW, version, scout.build(engine, gateway))
-    registry.register(
-        application_pack.WORKFLOW, application_pack.VERSION, application_pack.build(gateway)
-    )
+    for version, build in application_pack.VERSIONS.items():
+        registry.register(application_pack.WORKFLOW, version, build(gateway))
     registry.register(
         workspace.WORKFLOW, workspace.VERSION, workspace.build(engine, gateway, staging)
     )

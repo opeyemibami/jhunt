@@ -41,6 +41,7 @@ Decisions:
 - Profiles page: create and edit search profiles in the browser, with the targets, sources and scope of each. It replaces the Targets page item: targets are per profile. Each version is kept, and saving re-scores stored postings for that profile. (Owner, PR 3.6a review)
 - Facts page, the rest: add a fact, un-retire one, and change status or verified date in the browser (U6 edits text, evidence, level and aliases, and retires; ADR 0017). Drafts may suggest a missing fact, which the owner adds. (Owner, 2026-11-01)
 - Retry a failed submission from the application page: queue another start run on the same thread, which the worker continues from its checkpoint. Needs a small runtime helper (ADR 0018).
+- Pack draft replies sometimes leave out the cover-note `group` key, which fails the run (ADR 0019). If it recurs: structured output in the model gateway, or one retry on a shape failure. Owner to choose. There's also no Retry for a failed draft: Draft pack starts a new one.
 - WSL isn't always on. Before Scout's daily 07:00 run, decide between keeping the PC awake and moving the worker to Cloud Run early. (PR 2 review)
 
 ## Weeks 9 to 10
